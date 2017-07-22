@@ -4,174 +4,16 @@
   (:require [scad-clj.scad :refer :all]
             [scad-clj.model :refer :all]
             [unicode-math.core :refer :all]
-            [clojure.math.numeric-tower :refer :all]))
+            [clojure.math.numeric-tower :refer :all]
+            [optcase.attachwithvectors :refer :all]))
 
 
 (spit "things/post-demo.scad" ;cleans file
      nil )
 
-;;;;;;;;
-;TRANSLATION OF PRIMARY FUNCTIONS OF ATTACH MODULE
-;;;;;;;;
-
-(def defaulDrawingResolution 6) ;low res for vector arrows
-
-(defn- sqr [x] ;square x
-  (expt x 2))
-
-
-(defn modofvec [[x y z]] ;modulus of vecotr
-
-	(sqrt (+ (sqr x ) (sqr y) (sqr z) )))
-
-(defn cross [[x1 y1 z1] [x2 y2 z2]] ;cross product
-	(vector
-		(- (* y1 z2) (* z1 y2))
-  		(- (* z1 x2) (* x1 z2))
-  		(- (* x1 y2) (* y1 x2))
-  		))
-
-(defn dot [[x1 y1 z1] [x2 y2 z2]] ;dot product
-	 (+ (* x1 x2) (* y1 y2) (* z1 z2)))
-
-(defn unitv [[x y z]] ;unit vecotr
-	(vector 
-		(/ x (modofvec [x y z]) )
-		(/ y (modofvec [x y z]) ) 
-		(/ z (modofvec [x y z]) )))
-
-
-(defn anglev [[x1 y1 z1] [x2 y2 z2]] ;angle between vectors in radians
-	(Math/acos (/ (dot [x1 y1 z1] [x2 y2 z2]) (* (modofvec [x1 y1 z1]) (modofvec [x2 y2 z2])))))
-
-(defn point [p] ;make a small sphere at location p
-	(->>(sphere 0.7)
-		(translate p)
-		(with-fn defaulDrawingResolution)))
-
-(defn vectorz [l l_arrow mark]  ;make a vector in the z direction of length l, arrow length l_arrow, mark (true or false) to show angle
-	(let [lb 	(- l l_arrow)]
-		(union
-		(translate [0 0 (/ lb 2)] 
-			(union
-
-				(->>(cylinder [1 0.2] l_arrow);draw tye arrow
-					(translate [0 0 (/ lb 2)])
-					(with-fn defaulDrawingResolution))
-
-				(if mark
-					(->>
-						(cube 2 0.3 (* 0.8 l_arrow) )
-						(translate [1 0 0])
-						(translate [0 0 (+ (/ lb 2))])
-						)
-					)
-
-				(->> (cylinder 0.5 lb)
-					 (with-fn defaulDrawingResolution))
-				)
-			)
-		(->> (sphere 1)
-			 (with-fn defaulDrawingResolution))
-		))
-
-	)
-
-(defn orientate 
-	([v shape] (orientate v [0 0 1] 0 shape)) ;for default values
-
-	([v vref roll shape]
-	(let [
-		raxis 		(cross vref v) 
-		ang 		(anglev vref v)]
-
-	(->> shape
-		(rotate ang raxis)
-		(rotate roll v)
-		)
-	)))
-
-(defn drawingvector [v l l_arrow mark]
-	(->>(vectorz l l_arrow mark)
-		(orientate v)
-		))
-	
-(defn connector [[u v ang]] ;u is position, v is vector, ang is rotation around vector
-	
-	(union
-		(->> (point u)
-			(color [0.5 1 1 1]))
-
-		(->> (drawingvector v 8 2 true)
-			(color [0.5 1 1 1])
-			(rotate ang v)
-			(translate u)
-			)
-
-		))
-
-(defn attach [mainpart seconpart shape]
-	(let [ ;get data from parts
-		pos1 		(first mainpart)
-		v			(second mainpart)
-		roll 		(nth mainpart 2)
-
-		pos2 		(first seconpart)
-		vref		(second seconpart)
-
-		; calculation of the roll axis
-		raxis 		(cross vref v)
-
-		;calculate the angle between the vectors
-		ang 		(anglev vref v)
-		]
-
-	(->> shape
-		(translate (map #(- %1) pos2))
-		(rotate ang raxis)
-		(rotate roll v)
-		(translate pos1)
-		)
-
-	))
-
-
-(def a1 [[0 0 0] [1 0 0] 0])
-(def c1 [[5 5 5] [0 0 1] 2])
-(def testshapes (union (sphere 3) (cube 2 10 2) (cube 10 2 2)))
-
-(defn testmessing [] (union
-	(connector a1)
-	(connector c1)
-
-	; (->> (cube 10 10 10)
-	; 	 (color [0.6 0.8 0.2 0.5]))
-
-	testshapes
-
-	(attach c1 a1 testshapes)
-
-	))
-
 ;;;;;;;;;;;;
 ;GETTING THE PLATE MATRIX SET UP
 ;;;;;;;;;;;;
-; x is the internal
-; y is the external
-; each is a map: 
-; {
-; :cpnt [[1 2 3] [0 0 1] 0]
-; :xcoord		3
-; :ycoord 	3
-; }
-
-
-; [
-; [ 0 1 2 3 4 5]
-; [ 0 1 2 3 4 5]
-; [ 0 1 2 3 4 5]
-; [ 0 1 2 3 4 5]
-; ]
 
 (def keywidthForSpacing 	14.4)
 (def keySpacing 			5.05)
@@ -189,8 +31,6 @@
 			)
 		))
 	))
-
-
 
 
 (defn retr [arr x y]
@@ -289,10 +129,9 @@
 			(when (pntData :existence)
 				(attach [cpntP cpntV cpntA]
 						[[0 0 0] [0 0 1] 0]
-						(dsa-cap 1)
+						(union (dsa-cap 1) keyswitch)
 					))
-
-	)))
+)))
 
 (defn showconnectors [arr]
 		(for [ycoin (range arrYLen) xcoin (range arrXWid)]
@@ -305,7 +144,6 @@
 
 			(connector [cpntP cpntV cpntA]
 				)
-
 	)))
 
 ;
@@ -404,43 +242,49 @@
   `(fn [& args#] 
     (eval `(~'~m ~@args#))))
 
-(defn putupapost [arr xcoin ycoin pos callingfrom makingwhat buildedgesornot plateorbase]
+(defn putupapost [arr xcoin ycoin pos callingfrom makingwhat callingto buildedgesornot plateorbase]
 	(let [
-		pntData (smartretrPntData arr xcoin ycoin)
+		pntData (retrforbase arr xcoin ycoin callingfrom callingto makingwhat)
+		;pntData  (smartretrPntData arr xcoin ycoin)
 		cpntP 		(:cpntPos pntData)
 		cpntV 		(:cpntVec pntData)
 		cpntA 		(:cpntAng pntData)
 		exists		(:existence pntData)
 
 		xtrans (cond 
-				(= xcoin -1) 
-					(- 0 leftedgepadding mount-hole-width)
-				(= xcoin arrXWid) 
-					(+ rightedgepadding mount-hole-width)
+				(= xcoin -1)
+					;(- 0 leftedgepadding mount-hole-width (if (= plateorbase :base) -2 0))
+					(- keySpacing leftedgepadding)
+					;0
+				(= xcoin arrXWid)
+					;(+ rightedgepadding mount-hole-width (if (= plateorbase :base) -2 0))
+					(- rightedgepadding keySpacing)
+					;0
 				(= exists false)
 					(cond 
-						(and (= :callfromthisone callingfrom) (or (= :makingrows makingwhat) (= :makingdiag makingwhat)))
-							(- keySpacing leftedgepadding)
+						(and (= :callfromthisone callingfrom) (or (= :makingrows makingwhat)))
+							(- keySpacing leftedgepadding (if (= plateorbase :base) -2 0))
+
+						(and (= :callfromthisone callingfrom) (or (= :makingdiag makingwhat)))
+							(- keySpacing leftedgepadding (if (= plateorbase :base) -2 0))
 						
-						(and (= :callfromleft callingfrom) (or (= :makingrows makingwhat) (= :makingdiag makingwhat)))
-							(- rightedgepadding keySpacing)
+						(and (= :callfromleft callingfrom) (or (= :makingrows makingwhat)))
+							(- rightedgepadding keySpacing (if (= plateorbase :base) 2 0))
+
+						(and (= :callfromleft callingfrom) (or (= :makingdiag makingwhat)))
+							(- rightedgepadding keySpacing (if (= plateorbase :base) 2 0))
 
 						(and (= :makingcolumns makingwhat) (or (= :bl pos) (= :tl pos)))
-							(- rightedgepadding keySpacing)
+							(- rightedgepadding keySpacing (if (= plateorbase :base) 2 0))
 
 						(and (= :makingcolumns makingwhat) (or (= :br pos) (= :tr pos)))
-							(- keySpacing leftedgepadding)
-
+							(- keySpacing leftedgepadding (if (= plateorbase :base) 2 0))
 
 						(and (= :callfromleftbelow callingfrom) (= :makingdiag makingwhat))
-							(- rightedgepadding keySpacing)
-
-					
+							(- rightedgepadding keySpacing (if (= plateorbase :base) 2 0))
 
 						(and (= :callfrombelow callingfrom) (= :makingdiag makingwhat))
-							(- keySpacing leftedgepadding)
-
-
+							(- keySpacing leftedgepadding (if (= plateorbase :base) -2 0))
 
 						:else
 							0
@@ -452,41 +296,53 @@
 				)
 		ytrans (cond 
 				(= ycoin -1) 
-					(- 0 bottedgepadding mount-hole-height)
+					;(- 0 bottedgepadding mount-hole-height (if (= plateorbase :base) -2 0))
+					;bottedgepadding
+					(- keySpacing bottedgepadding)
 				(= ycoin arrYLen) 
-					(+ topedgepadding mount-hole-height)
+					;(+ topedgepadding mount-hole-height  (if (= plateorbase :base) -2 0))
+					;topedgepadding
+					(- topedgepadding keySpacing)
+					;0
 				(= exists false)
 					(cond 
-						(and (= :callfromthisone callingfrom) (or (= :makingcolumns makingwhat) (= :makingdiag makingwhat)))
-							(- keySpacing topedgepadding)
-						
-						(and (= :callfrombelow callingfrom) (or (= :makingcolumns makingwhat) (= :makingdiag makingwhat)))
-							(- bottedgepadding keySpacing)
+						(and (= :callfromthisone callingfrom) (or (= :makingdiag makingwhat)))
+							(- keySpacing topedgepadding (if (= plateorbase :base) 2 0))
+
+						(and (= :callfromthisone callingfrom) (or (= :makingcolumns makingwhat)))
+							(- keySpacing topedgepadding (if (= plateorbase :base) -2 0))
+
+						(and (= :callfrombelow callingfrom) (or (= :makingcolumns makingwhat)))
+							(- bottedgepadding keySpacing (if (= plateorbase :base) 2 0))
+
+						(and (= :callfrombelow callingfrom) (or (= :makingdiag makingwhat)))
+							(- bottedgepadding keySpacing (if (= plateorbase :base) -2 0))
 
 						(and (= :makingrows makingwhat) (or (= :tr pos) (= :tl pos)))
-							(- keySpacing topedgepadding)
+							(- keySpacing topedgepadding (if (= plateorbase :base) 2 0))
 
 						(and (= :makingrows makingwhat) (or (= :br pos) (= :bl pos)))
-							(- bottedgepadding keySpacing)
+							(- bottedgepadding keySpacing (if (= plateorbase :base) -2 0))
 
 						(and (= :callfromleftbelow callingfrom) (= :makingdiag makingwhat))
-							(- bottedgepadding keySpacing)
+							(- bottedgepadding keySpacing (if (= plateorbase :base) 2 0))
 
 						(and (= :callfromleft callingfrom) (= :makingdiag makingwhat))
-							(- keySpacing topedgepadding)
+							(- keySpacing topedgepadding (if (= plateorbase :base) 2 0))
 
 						:else
 							0
 						)
-
-					
 				:else
 					0
 				)
+
 		ztrans (if (= plateorbase :base)
-					-12
+					(+ -12 plate-thickness)
+					;-12
 					0
 			)
+
 		edge    ;this determines if the post should be an edge post or not.
 				;This is easy if x or y is -1 or arrxwid or arrylen.
 				;also easy if x or y is 0 and being called from the left or below. 
@@ -562,11 +418,28 @@
 						(map (make-fn not))
 						(apply (make-fn or))
 							)))
-				
-						
+		
+		; xtrans 		(if (and edge (= plateorbase :base))
+		; 				(cond 
+		; 					(and (or (= pos :tr) (= pos :br)))
+		; 						(+ xtrans 2)
+		; 					(and (or (= pos :tl) (= pos :bl)))
+		; 						(- xtrans 2)
+		; 					:else
+		; 						xtrans
+		; 					)
+		; 				xtrans)
 
+		; ytrans 		(if (and edge (= plateorbase :base))
+		; 				(cond 
+		; 					(or (= pos :tl) (= pos :tr))
+		; 						(+ ytrans 2)
+		; 					(or (= pos :br) (= pos :bl))
+		; 						(- ytrans 2)
+		; 					)
+		; 				ytrans)
+						
 		post (cond 
-				
 				(and buildedgesornot edge) 
 					(cond
 						(= pos :tl) (partial web-post-edge-tl)
@@ -615,98 +488,472 @@
 	it might still be used because it is involved in making and edge or corner for a key that does exist.
 	This is dealt with in neigbhourtoexistence."
 	(let [
-		function  			(cond
-								(= plateorbase :plate)
-								 	(partial triangle-hulls)
-								(= plateorbase :base)
-									(partial union)
-							)
-		otherfunction  		(cond
-								(= plateorbase :plate)
-								 	(partial union)
-								(= plateorbase :base)
-									;#(color [(rand) 0.5 0.5 1] (hull %1))
-									(partial #(dual-hull (vec %1)))
-							)
+
 		buildedges 			(cond
 								(= plateorbase :plate)
 								 	true
 								(= plateorbase :base)
 									false
 							)
-
 		]
 	(apply union
 		(concat
 			;Row connectors
 			(for [ycoin (range arrYLen)]
 				(color [1 (rand) 1 1] 
-				(otherfunction
 				(for  [xcoin (range -1  arrXWid)]
 				(when (neigbhourtoexistence? arr xcoin ycoin :buildingrowsconnects)
-					(function
-						(putupapost arr xcoin       ycoin :tr :callfromthisone :makingrows buildedges plateorbase)
-						(putupapost arr xcoin       ycoin :br :callfromthisone :makingrows buildedges plateorbase)
-						(putupapost arr (inc xcoin) ycoin :tl :callfromleft    :makingrows buildedges plateorbase)
-						(putupapost arr (inc xcoin) ycoin :bl :callfromleft    :makingrows buildedges plateorbase)
+					(triangle-hulls
+						(putupapost arr xcoin       ycoin :tr :callfromthisone :makingrows :here buildedges plateorbase)
+						(putupapost arr xcoin       ycoin :br :callfromthisone :makingrows :here buildedges plateorbase)
+						(putupapost arr (inc xcoin) ycoin :tl :callfromleft    :makingrows :right buildedges plateorbase)
+						(putupapost arr (inc xcoin) ycoin :bl :callfromleft    :makingrows :right buildedges plateorbase)
 						)
-					)))))
+					))))
 
 			;Columns connectors
 			(for [ycoin (range -1 arrYLen)]
 				(color [(rand) 1 1 1] 
-				;(otherfunction
 				(for [xcoin (range arrXWid)]
 				(when (neigbhourtoexistence? arr xcoin ycoin :buildingcolumnconnects) 
-					(function
-						(putupapost arr xcoin       ycoin :tr :callfromthisone :makingcolumns buildedges plateorbase)
-						(putupapost arr xcoin (inc ycoin) :br :callfrombelow   :makingcolumns buildedges plateorbase)
-						(putupapost arr xcoin       ycoin :tl :callfromthisone :makingcolumns buildedges plateorbase)
-						(putupapost arr xcoin (inc ycoin) :bl :callfrombelow   :makingcolumns buildedges plateorbase)
+					(triangle-hulls
+						(putupapost arr xcoin       ycoin :tr :callfromthisone :makingcolumns :here buildedges plateorbase)
+						(putupapost arr xcoin (inc ycoin) :br :callfrombelow   :makingcolumns :above buildedges plateorbase)
+						(putupapost arr xcoin       ycoin :tl :callfromthisone :makingcolumns :here buildedges plateorbase)
+						(putupapost arr xcoin (inc ycoin) :bl :callfrombelow   :makingcolumns :above buildedges plateorbase)
 						)
-					))));)
+					))))
 
 			;Diagonal connectors
 			(for [ycoin (range -1 arrYLen)]
 				(color [0.2 0.2 (rand) 1] 
-				(otherfunction
 				(for [xcoin (range -1 arrXWid)]
 				(when (neigbhourtoexistence? arr xcoin ycoin :buildingdiagonalsconnects)
-					(function
-						(putupapost arr xcoin       ycoin       :tr :callfromthisone :makingdiag buildedges plateorbase)
-						(putupapost arr xcoin       (inc ycoin) :br :callfrombelow   :makingdiag buildedges plateorbase)
-						(putupapost arr (inc xcoin) ycoin       :tl :callfromleft    :makingdiag buildedges plateorbase)
-						(putupapost arr (inc xcoin) (inc ycoin) :bl :callfromleftbelow :makingdiag buildedges plateorbase)
+					(triangle-hulls
+						(putupapost arr xcoin       ycoin       :tr :callfromthisone :makingdiag :here buildedges plateorbase)
+						(putupapost arr xcoin       (inc ycoin) :br :callfrombelow   :makingdiag :above buildedges plateorbase)
+						(putupapost arr (inc xcoin) ycoin       :tl :callfromleft    :makingdiag :right buildedges plateorbase)
+						(putupapost arr (inc xcoin) (inc ycoin) :bl :callfromleftbelow :makingdiag :aboveleft buildedges plateorbase)
 						)
-					)))))
+					))))
+
+			;key connector for base
+			(when (= plateorbase :base)
+				(for [ycoin (range arrYLen)]
+				(color [0.2 0.2 (rand) 1] 
+				(for [xcoin (range arrXWid)]
+				(when ((retr arr xcoin ycoin) :existence)
+					(hull
+						(putupapost arr xcoin ycoin :tr :callfromthisone :makingkeycentre :here buildedges plateorbase)
+						(putupapost arr xcoin ycoin :br :callfromthisone :makingkeycentre :here buildedges plateorbase)
+						(putupapost arr xcoin ycoin :tl :callfromthisone :makingkeycentre :here buildedges plateorbase)
+						(putupapost arr xcoin ycoin :bl :callfromthisone :makingkeycentre :here buildedges plateorbase)
+						)
+					))))
+				)
 
 			))))
 
-(defn averageofvecs [& more]
+(defn attachpoint [[pos vect ang] [x y z]]
+	"Like the attach module except this returns the attached coordinates of a point instead of an attached shape.
+	this is useful when you want to get the attached coordinates for things like polyhedron."
+	(let [ 
+		 
+	 	u 				(unitv vect)
+	 	a 				(u 0)
+	 	b 				(u 1)
+	 	c 				(u 2)
+	 	d 				(modofvec [0 b c])
 
+	 	ConD 			(/ c d)
+	 	BonD 			(/ b d)
+		
+
+	 	yaxisinv    	[
+	 					 (+ (* x d) (* z a))
+	 					 y
+	 					 (- (* z d) (* x a))
+	 					]
+
+	 	xaxisinv   		[
+	 					 (yaxisinv 0)
+	 					 (+ (* (yaxisinv 1) ConD) (* (yaxisinv 2) BonD))
+	 					 (- (* (yaxisinv 2) ConD) (* (yaxisinv 1) BonD))
+	 					]
+        
+	 	finalpos		[
+	 					(+ (xaxisinv 0) (pos 0))
+	 					(+ (xaxisinv 1) (pos 1))
+	 					(+ (xaxisinv 2) (pos 2))
+	 					]
+	 	]
+	 	finalpos
+	))
+
+(defn average [numbers]
+    (/ (apply + numbers) (count numbers)))
+
+(defn averageofcoord [& more]
+	;(prn more)
+	[
+		(average (map first more))
+		(average (map second more))
+		(average (map last more))
+	])
+
+(def smartcontinuationofedges true)
+
+(defn retrforbase [arr xcoin ycoin callingfrom callingto makingwhat]
+	(retrforbasegoodx arr xcoin ycoin callingfrom callingto makingwhat)
+	)
+
+(defn retrforbasegoodx [arr xcoin ycoin callingfrom callingto makingwhat]
+	(cond 
+		(= xcoin -1)
+			(let [ referencepnt		(retrforbase arr 0 ycoin callingfrom callingto makingwhat)]
+				(assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [(- 0 mount-hole-width keySpacing ) 0 0])))
+		
+		(= xcoin arrXWid)
+			(let [referencepnt		(retrforbase arr (dec arrXWid) ycoin callingfrom callingto makingwhat)]
+				(assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [(+ mount-hole-width keySpacing ) 0 0])))
+
+		:else
+			(retrforbasegoody arr xcoin ycoin callingfrom callingto makingwhat)
+		)
+	)
+
+(defn retrforbasegoody [arr xcoin ycoin callingfrom callingto makingwhat]
+	;(prn xcoin ycoin callingfrom callingto makingwhat)
+	(cond 
+		(= -1 ycoin) 
+			(let [
+				referencepnt		(retrforbase arr xcoin 0 callingfrom callingto makingwhat)
+				](assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [0 (- 0 mount-hole-width keySpacing ) 0])))
+
+		(= arrYLen ycoin)
+			(let [
+				referencepnt		(retrforbase arr xcoin (dec arrYLen) callingfrom callingto makingwhat)
+				](assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [0 (+ mount-hole-width keySpacing ) 0])))
 	
+		(and (not ((retr arr xcoin ycoin) :existence)) smartcontinuationofedges)
+							(let [newkeyandpos  (case callingfrom
+													:callfromthisone
+														(case makingwhat
+															:makingcolumns [(retrforbase arr xcoin (inc ycoin) callingfrom callingto makingwhat) 	[0 (- 0 mount-hole-height keySpacing) 0]] 
+															:makingrows    [(retrforbase arr (inc xcoin) ycoin callingfrom callingto makingwhat) 	[(- 0 mount-hole-height keySpacing) 0 0]] 
+															:makingdiag    (cond 
+																																				((smartretrPntData arr xcoin (inc ycoin)) 		:existence) [(smartretrPntData arr xcoin (inc ycoin) ) 			[0 (- 0 mount-hole-height keySpacing) 0]]
+
+																				((smartretrPntData arr (inc xcoin) ycoin) 		:existence) [(smartretrPntData arr (inc xcoin) ycoin  	)		[(- 0 mount-hole-height keySpacing) 0 0]]
+																				
+																				((smartretrPntData arr (inc xcoin) (inc ycoin)) :existence) [(smartretrPntData arr (inc xcoin) (inc ycoin)) 	[(- 0 mount-hole-height keySpacing) (- 0 mount-hole-height keySpacing) 0]]
+
+																				)
+															;[(retr arr xcoin ycoin) [0 0 0]]
+															)
+													:callfromleft	
+														(case makingwhat
+															:makingrows    [(retrforbase arr (dec xcoin) ycoin callingfrom callingto makingwhat) 	[(+ mount-hole-height keySpacing) 0 0]] 
+															:makingdiag    (cond 
+																				((smartretrPntData arr (dec xcoin) ycoin) 		:existence) [(smartretrPntData arr (dec xcoin) ycoin  	)		[(+ mount-hole-height keySpacing) 0 0]]
+																				((smartretrPntData arr xcoin (inc ycoin)) 		:existence) [(smartretrPntData arr xcoin (inc ycoin) ) 			[0 (- 0 mount-hole-height keySpacing) 0]]
+																				((smartretrPntData arr (dec xcoin) (inc ycoin)) :existence) [(smartretrPntData arr (dec xcoin) (inc ycoin)) 	[(+ mount-hole-height keySpacing) (- 0 mount-hole-height keySpacing) 0]]
+
+																				)
+															;[(retr arr xcoin ycoin) [0 0 0]]
+															)
+													:callfrombelow	
+														(case makingwhat
+															:makingcolumns [(retrforbase arr xcoin (dec ycoin) callingfrom callingto makingwhat) 	[0 (+ mount-hole-height keySpacing) 0]] 
+															:makingdiag    (cond 
+																				((smartretrPntData arr (inc xcoin) ycoin) 		:existence)  [(retrforbase arr (inc xcoin) ycoin callingfrom callingto makingwhat) 			[(- 0 mount-hole-height keySpacing) 0 0]]
+																				((smartretrPntData arr xcoin (dec ycoin)) 		:existence)  [(retrforbase arr xcoin (dec ycoin) callingfrom callingto makingwhat) 			[0 (+ mount-hole-height keySpacing) 0]]
+																				((smartretrPntData arr (inc xcoin) (dec ycoin)) :existence)  [(retrforbase arr (inc xcoin) (dec ycoin) callingfrom callingto makingwhat) 	[(- 0 mount-hole-height keySpacing) (+ mount-hole-height keySpacing) 0]]
+																				)
+															;[(retr arr xcoin ycoin) [0 0 0]]
+															)
+													:callfromleftbelow	
+														(case makingwhat
+															:makingdiag    (cond 
+																				((smartretrPntData arr (dec xcoin) ycoin) 		:existence)  [(retrforbase arr (dec xcoin) ycoin callingfrom callingto makingwhat) 			[(+ mount-hole-height keySpacing) 0 0]]
+																				((smartretrPntData arr xcoin (dec ycoin)) 		:existence)  [(retrforbase arr xcoin (dec ycoin) callingfrom callingto makingwhat) 			[0 (+ mount-hole-height keySpacing) 0]]
+																				((smartretrPntData arr (dec xcoin) (dec ycoin)) :existence)  [(retrforbase arr (dec xcoin) (dec ycoin) callingfrom callingto makingwhat) 	[(+ mount-hole-height keySpacing) (+ mount-hole-height keySpacing) 0]]
+																				)
+															)
+
+													;[(retr arr xcoin ycoin) [0 0 0]]
+													)
+									]	
+								(assoc (newkeyandpos 0) :cpntPos (attachpoint [((newkeyandpos 0) :cpntPos) ((newkeyandpos 0) :cpntVec) ((newkeyandpos 0) :cpntAng)] (newkeyandpos 1)))
+								)
+									
+		:else
+			(retr arr xcoin ycoin))
+	)	
+
+
+
+(defn centreofcomponentpost [arr component xval yval pos uporlow]
+	(let [
+		currentPnt 		(smartretrPntData arr xval yval)
+		halfwid 		(/ mount-hole-width 2) 			
+		adjacentPnts	(cond 
+							(= component :diag)	
+							(cond 
+								(= pos :tr) [(retrforbase arr xval (inc yval)) (retrforbase arr (inc xval) yval) (retrforbase arr (inc xval) (inc yval))]
+								(= pos :br) [(retrforbase arr xval (dec yval)) (retrforbase arr (inc xval) yval) (retrforbase arr (inc xval) (dec yval))]
+								(= pos :tl) [(retrforbase arr xval (inc yval)) (retrforbase arr (dec xval) yval) (retrforbase arr (dec xval) (inc yval))]
+								(= pos :bl) [(retrforbase arr xval (dec yval)) (retrforbase arr (dec xval) yval) (retrforbase arr (dec xval) (dec yval))]
+								)
+							(= component :row)
+							(cond 
+								(= pos :tr) [(retrforbase arr (inc xval) yval)]
+								(= pos :br) [(retrforbase arr (inc xval) yval)]
+								(= pos :tl) [(retrforbase arr (dec xval) yval)]
+								(= pos :bl) [(retrforbase arr (dec xval) yval)]
+								)
+							(= component :col)
+							(cond 
+								(= pos :tr) [(retrforbase arr xval (inc yval))]
+								(= pos :br) [(retrforbase arr xval (dec yval))]
+								(= pos :tl) [(retrforbase arr xval (inc yval))]
+								(= pos :bl) [(retrforbase arr xval (dec yval))]
+								)
+							)
+
+		corners 		(cond 
+							(= component :diag)
+							(cond 
+								(= pos :tr) [[halfwid halfwid 0] [halfwid (- halfwid) 0] [( - halfwid) halfwid 0] [(- halfwid) (- halfwid) 0]]
+								(= pos :br) [[halfwid (- halfwid) 0] [halfwid halfwid 0] [( - halfwid) (- halfwid) 0] [(- halfwid) halfwid 0]]
+								(= pos :tl) [[(- halfwid) halfwid 0] [(- halfwid) (- halfwid) 0] [halfwid halfwid 0]  [halfwid (- halfwid) 0]]
+								(= pos :bl) [[(- halfwid) (- halfwid) 0] [(- halfwid) halfwid 0] [halfwid (- halfwid) 0] [halfwid halfwid 0]]
+								)
+							(= component :row)
+							(cond 
+								(= pos :tr) [[halfwid halfwid 0] [(- halfwid) halfwid 0]]
+								(= pos :br) [[halfwid (- halfwid) 0] [(- halfwid) (- halfwid) 0]]
+								(= pos :tl) [[(- halfwid) halfwid 0] [halfwid halfwid 0]]
+								(= pos :bl) [[(- halfwid) (- halfwid) 0] [halfwid (- halfwid) 0]]
+							)
+							(= component :col)
+							(cond 
+								(= pos :tr) [[halfwid halfwid 0] [halfwid (- halfwid) 0]]
+								(= pos :br) [[halfwid (- halfwid) 0] [halfwid halfwid 0]]
+								(= pos :tl) [[(- halfwid) halfwid 0] [(- halfwid) (- halfwid) 0]]
+								(= pos :bl) [[(- halfwid) (- halfwid) 0] [(- halfwid) halfwid 0]]
+							)
+						)
+							
+		attachedcorners (cond 
+					(= component :diag)
+						[(attachpoint [(currentPnt :cpntPos) (currentPnt :cpntVec) (currentPnt :cpntAng)] (corners 0))
+						(attachpoint [((adjacentPnts 0) :cpntPos) ((adjacentPnts 0) :cpntVec) ((adjacentPnts 0) :cpntAng)] (corners 1))
+						(attachpoint [((adjacentPnts 1) :cpntPos) ((adjacentPnts 1) :cpntVec) ((adjacentPnts 1) :cpntAng)] (corners 2))
+						(attachpoint [((adjacentPnts 2) :cpntPos) ((adjacentPnts 2) :cpntVec) ((adjacentPnts 2) :cpntAng)] (corners 3))]
+					(or (= component :row ) (= component :col))
+						[(attachpoint [(currentPnt :cpntPos) (currentPnt :cpntVec) (currentPnt :cpntAng)] (corners 0))
+						(attachpoint [((adjacentPnts 0) :cpntPos) ((adjacentPnts 0) :cpntVec) ((adjacentPnts 0) :cpntAng)] (corners 1))]
+					(= component :key)
+						[(currentPnt :cpntPos)]
+						
+					)
+
+
+		cornersaveraged (cond
+							(= component :key)
+								(currentPnt :cpntPos)
+							:else
+								(apply averageofcoord attachedcorners)
+								)
+		averagevec 		(cond 
+							(= component :diag)
+								(averageofcoord (currentPnt :cpntVec) ((adjacentPnts 0) :cpntVec) ((adjacentPnts 1) :cpntVec) ((adjacentPnts 2) :cpntVec))
+							(or (= component :row) (= component :col))
+								(averageofcoord (currentPnt :cpntVec) ((adjacentPnts 0) :cpntVec))
+							(= component :key)
+								(currentPnt :cpntVec)
+						)
+		post 			(cube 0.1 0.1 3)	
+		depthbeneath 	8.1
+		offset			-0.1
+		slightrans 		(case pos
+							:br [(- offset) offset 0]
+							:bl [offset offset 0]
+							:tr [(- offset) (- offset) 0]
+							:tl [offset (- offset) 0]
+							:centre [0 0 0]
+							)
+		; slightrans 		[0 0 0]
+		]
+		;(prn cornersaveraged)
+		;(attach [cornersaveraged averagevec 0] [[0 0 13] [0 0 1] 0] post)
+
+
+		(case uporlow
+			:upper
+				(attachpoint [cornersaveraged averagevec 0] [(slightrans 0) (slightrans 1) (- 0 depthbeneath)])
+
+			:lower
+
+				(attachpoint [cornersaveraged averagevec 0] [(slightrans 0) (slightrans 1) (- 0 depthbeneath plate-thickness)])
+			)
+		
+		)
+
+
 	)
 
 (defn makenewbase [arr]
 	(apply union
-		(concat
-	(for [ycoin (range arrYLen) xcoin (range arrXWid)]
-		(hull
-			; (centreofdiagpost arr xcoin ycoin :tl)
-			; (centreofdiagpost arr xcoin ycoin :bl)
-			; (centreofdiagpost arr xcoin ycoin :br)
-			; (centreofdiagpost arr xcoin ycoin :tr)
+	(concat
+	;(for [ycoin (range arrYLen) xcoin (range arrXWid)]
+	(for [ycoin (range 0 arrYLen) xcoin [0 1 2 3 4 5 6 7]]
+		(when ((retr arr xcoin ycoin) :existence)
+			; (union
+			; (hull
+			; 	(centreofcomponentpost arr :diag xcoin ycoin :tl)
+			; 	(centreofcomponentpost arr :col xcoin ycoin :tl)
+			; 	(centreofcomponentpost arr :row xcoin ycoin :tl)
+			; )
+			; (hull
+			; 	(centreofcomponentpost arr :diag xcoin ycoin :bl)
+			; 	(centreofcomponentpost arr :col xcoin ycoin :bl)
+			; 	(centreofcomponentpost arr :row xcoin ycoin :bl)
+			; 	)
+			; (hull
+			; 	(centreofcomponentpost arr :diag xcoin ycoin :br)
+			; 	(centreofcomponentpost arr :col xcoin ycoin :br)
+			; 	(centreofcomponentpost arr :row xcoin ycoin :br)
+			; 	)
+			; (hull
+			; 	(centreofcomponentpost arr :diag xcoin ycoin :tr)
+			; 	(centreofcomponentpost arr :col xcoin ycoin :tr)
+			; 	(centreofcomponentpost arr :row xcoin ycoin :tr)
+			; 	)
+			; (hull
+			; 	(centreofcomponentpost arr :col xcoin ycoin :tl)
+			; 	(centreofcomponentpost arr :col xcoin ycoin :tr)
+			; 	(centreofcomponentpost arr :col xcoin ycoin :br)
+			; 	(centreofcomponentpost arr :col xcoin ycoin :bl)
 
-			; (centreofcolumnpost arr xcoin ycoin :tr)
-			; (centreofcolumnpost arr xcoin ycoin :tl)
-			; (centreofcolumnpost arr xcoin ycoin :br)
-			; (centreofcolumnpost arr xcoin ycoin :bl)
+			; 	(centreofcomponentpost arr :row xcoin ycoin :tl)
+				
+			; 	(centreofcomponentpost arr :row xcoin ycoin :bl)
+				
+			; 	(centreofcomponentpost arr :row xcoin ycoin :br)
+				
+			; 	(centreofcomponentpost arr :row xcoin ycoin :tr)
+			; 	))
 
-			(centreofrowpost arr xcoin ycoin :tr)
-			(centreofrowpost arr xcoin ycoin :tl)
-			(centreofrowpost arr xcoin ycoin :br)
-			(centreofrowpost arr xcoin ycoin :bl)
+			(let [
+				points [
+					(centreofcomponentpost arr :diag xcoin ycoin :tl :upper)
+					(centreofcomponentpost arr :col  xcoin ycoin :tl :upper)
+					(centreofcomponentpost arr :col  xcoin ycoin :tr :upper)
+					(centreofcomponentpost arr :diag xcoin ycoin :tr :upper)
+					(centreofcomponentpost arr :row  xcoin ycoin :tr :upper)
+					(centreofcomponentpost arr :row  xcoin ycoin :br :upper)
+					(centreofcomponentpost arr :diag xcoin ycoin :br :upper)
+					(centreofcomponentpost arr :col  xcoin ycoin :br :upper)
+					(centreofcomponentpost arr :col  xcoin ycoin :bl :upper)
+					(centreofcomponentpost arr :diag xcoin ycoin :bl :upper)
+					(centreofcomponentpost arr :row  xcoin ycoin :bl :upper)
+					(centreofcomponentpost arr :row  xcoin ycoin :tl :upper)
+
+					(centreofcomponentpost arr :diag xcoin ycoin :tl :lower)
+					(centreofcomponentpost arr :col  xcoin ycoin :tl :lower)
+					(centreofcomponentpost arr :col  xcoin ycoin :tr :lower)
+					(centreofcomponentpost arr :diag xcoin ycoin :tr :lower)
+					(centreofcomponentpost arr :row  xcoin ycoin :tr :lower)
+					(centreofcomponentpost arr :row  xcoin ycoin :br :lower)
+					(centreofcomponentpost arr :diag xcoin ycoin :br :lower)
+					(centreofcomponentpost arr :col  xcoin ycoin :br :lower)
+					(centreofcomponentpost arr :col  xcoin ycoin :bl :lower)
+					(centreofcomponentpost arr :diag xcoin ycoin :bl :lower)
+					(centreofcomponentpost arr :row  xcoin ycoin :bl :lower)
+					(centreofcomponentpost arr :row  xcoin ycoin :tl :lower)
+
+					(centreofcomponentpost arr :key  xcoin ycoin :centre :upper) ;24
+					(centreofcomponentpost arr :key  xcoin ycoin :centre :lower) ;25
+
+					]
+
+				faces [
+					; [0 1 2 3 4 5 6 7 8 9 10 11]
+					; [23 22 21 20 19 18 17 16 15 14 13 12]
+					[0 1 11] [2 3 4] [5 6 7] [8 9 10] [1 2 24] [2 4 24] [4 5 24] [5 7 24] [7 8 24] [8 10 24] [10 11 24] [11 1 24]
+					[13 12 23] [16 15 14] [19 18 17] [22 21 20] [25 14 13] [25 16 14] [25 17 16] [25 19 17] [25 20 19] [25 22 20] [25 23 22] [25 13 23]
+					[0 12 13]
+					[1 0 13]
+					[1 13 14]
+					[1 14 2]
+					[2 14 15]
+					[2 15 3]
+					[3 15 16]
+					[3 16 4]
+					[4 16 17]
+					[4 17 5]
+					[5 17 18]
+					[5 18 6]
+					[6 19 7]
+					[6 18 19]
+					[7 19 20]
+					[7 20 8]
+					[8 20 21]
+					[8 21 9]
+					[9 21 22]
+					[9 22 10]
+					[10 22 23]
+					[10 23 11]
+					[11 23 12]
+					[11 12 0]
+				]]
+			
+			;(translate [(* (rand) 10) (rand) (rand)]
+			;(resize [20 20 3]
+			;(union
+			;(translate [(* 10 xcoin) 0 0]
+			(polyhedron points faces ););)
+				
+		)))
+
+		)))
+(defn makelegs [arr]
+	(let [
+		topright ((retr arr (- arrXWid 1) (- arrYLen 1)) :cpntPos)
+		topleft ((retr arr 1 (- arrYLen 1)) :cpntPos)
+		bottomright ((retr arr (- arrXWid 1) 1) :cpntPos)
+		bottomleft ((retr arr 1 1) :cpntPos)
+		]
+		(union
+			(translate [(topright    0) (topright    1) 0] (cylinder 5 50))
+			(translate [(topleft     0) (topleft     1) 0] (cylinder 5 50))
+			(translate [(bottomright 0) (bottomright 1) 0] (cylinder 5 50))
+			(translate [(bottomleft  0) (bottomleft  1) 0] (cylinder 5 50))
 			)
+		)
+	)
+
+(defn makenewbasewithextras [arr]
+	(union
+	(makenewbase arr)
+	(difference
+	(makelegs arr)
+
+	(translate [0 0 1] (makenewbase arr)
+	(translate [0 0 (* (- plate-thickness 0.5) 1)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 2)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 3)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 4)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 5)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 6)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 7)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 8)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 9)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 10)] (makenewbase arr))
+	(translate [0 0 (* (- plate-thickness 0.5) 11)] (makenewbase arr))
+
 	))))
 
 (defn findnewvec [[x1 y1 z1] [x2 y2 z2]]
@@ -922,11 +1169,11 @@
 (defn keyExistence [arr]
 	(let [existencearray
 					 [
-					[false true true true true true true true] 
+					[false true true false false false true true] 
 					[false true true true true true true true] 
 					[false true true true true true true true] 
 					[true true true true true true true true] 
-					[true true true true true true true true] ;as seem from origin looking in pos x, pos y
+					[true true true false false false false true] ;as seem from origin looking in pos x, pos y
 
 					]]
 		(vec (for [ycoin (range arrYLen)]
@@ -996,8 +1243,6 @@
 		)
 
 	)
-
-
 
 (defn usbcutouts [positiveornegativeshape]
 	(let [
@@ -1206,8 +1451,8 @@
 
 		(curvexaxisy)
 
-		(angleKey :row 0 		(/ Math/PI 6))
-		(angleKey :colrow [0 1] (/ Math/PI 6))
+		; (angleKey :row 0 		(/ Math/PI 6))
+		; (angleKey :colrow [0 1] (/ Math/PI 6))
 		
 		(alignkeys [[0 0] [1 0] :ontheleft])
 		(alignkeys [[7 0] [6 0] :ontheright])
@@ -1221,14 +1466,58 @@
 	)
 	
 
+(def keyswitch 
+	(let [
+		hw (/ 15.6 2)
+		points 	[
+					[hw hw 0] [hw (- hw) 0] [(- hw) (- hw) 0] [(- hw) hw 0]
+					[hw hw 1] [hw (- hw) 1] [(- hw) (- hw) 1] [(- hw) hw 1]
+					[(- hw 2) (- hw 2) -5] [(- hw 2) (- 0 hw -2) -5] [(- 0 hw -2) (- 0 hw -2) -5] [(- 0 hw -2) (- hw 2) -5]
+					[(- hw 3) (- hw 3) 6.6] [(- hw 3) (- 0 hw -3) 6.6] [(- 0 hw -3) (- 0 hw -3) 6.6] [(- 0 hw -3) (- hw 3) 6.6]
+					]
+
+		faces	[
+				;	[3 2 1 0] 
+				;	[4 5 6 7]
+					[0 1 5 4]
+					[2 3 7 6]
+					[1 2 6 5]
+					[3 0 4 7]
+					[11 10 9 8]
+					[12 13 14 15]
+					[8 9 1 0]
+					[9 10 2 1]
+					[10 11 3 2]
+					[11 8 0 3]
+
+					[4 5 13 12]
+					[5 6 14 13]
+					[6 7 15 14]
+					[7 4 12 15]
+
+					]
+		]
+	(union
+	(polyhedron points faces)
+	(translate [0 0 1] (cylinder (/ 3.30 2) 18.5))
+	)))
+
 (defn doesnttoucharrayFunctions [arr & more]
 	"These functions only read the array hence the arr parameter being 
 	passed to each of them individually. Unlike the threading of the transformationFunctions"
 	;(let [base (makeconnectors arr :base)]
 	(union 
 		;(putsquareinarr arr)
+
+		
 		(makeconnectors arr :plate)
-		(translate [0 0 -10] (makenewbase arr))
+		;(scale [0.97 0.95 1] 
+		(makeconnectors arr :base)
+		;(makelegs arr)
+		;(hull
+		;(makenewbasewithextras arr);)
+		;(translate [0 0 (- 0 plate-thickness -0.1)] (makenewbase arr)))
+
 		; (difference
 		; 	(union (newbase arr))
 		; 	(union (translate [0 0 4] (newbase arr)))
@@ -1246,8 +1535,10 @@
 		;(makesidenubs arr)
 		;(showkeycaps arr)
 		;(showconnectors arr)
+		;keyswitch
 		;)
 	))
+
 
 (defn buildarray []
 		 (-> (createarray arrXWid arrYLen)
@@ -1260,7 +1551,7 @@
       (write-scad 
       	(->>
       	(buildarray)
-      	(rotate (/ Math/PI 15) [0 1 0]) 
+      	;(rotate (/ Math/PI 15) [0 1 0]) 
       ;	(rotate (/ Math/PI 10) [1 0 0])
 
       		))  :append true)
