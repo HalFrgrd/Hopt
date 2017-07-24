@@ -124,3 +124,39 @@
 		)
 
 	))
+
+(defn attachpoint [[pos vect ang] [x y z]]
+	"Like the attach module except this returns the attached coordinates of a point instead of an attached shape.
+	this is useful when you want to get the attached coordinates for things like polyhedron."
+	(let [ 
+		 
+	 	u 				(unitv vect)
+	 	a 				(u 0)
+	 	b 				(u 1)
+	 	c 				(u 2)
+	 	d 				(modofvec [0 b c])
+
+	 	ConD 			(/ c d)
+	 	BonD 			(/ b d)
+		
+
+	 	yaxisinv    	[
+	 					 (+ (* x d) (* z a))
+	 					 y
+	 					 (- (* z d) (* x a))
+	 					]
+
+	 	xaxisinv   		[
+	 					 (yaxisinv 0)
+	 					 (+ (* (yaxisinv 1) ConD) (* (yaxisinv 2) BonD))
+	 					 (- (* (yaxisinv 2) ConD) (* (yaxisinv 1) BonD))
+	 					]
+        
+	 	finalpos		[
+	 					(+ (xaxisinv 0) (pos 0))
+	 					(+ (xaxisinv 1) (pos 1))
+	 					(+ (xaxisinv 2) (pos 2))
+	 					]
+	 	]
+	 	finalpos
+	))

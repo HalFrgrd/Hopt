@@ -3,6 +3,7 @@
   (:refer-clojure :exclude [use import])
   (:require [scad-clj.scad :refer :all]
             [scad-clj.model :refer :all]
+            [clojure.contrib.core :refer :all]
             [unicode-math.core :refer :all]
             [clojure.math.numeric-tower :refer :all]
             [optcase.attachwithvectors :refer :all]))
@@ -11,20 +12,40 @@
 (spit "things/post-demo.scad" ;cleans file
      nil )
 
-;;;;;;;;;;;;
-;GETTING THE PLATE MATRIX SET UP
-;;;;;;;;;;;;
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Some handy functions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defmacro make-fn [m] 
+	"This is used to turn macros like and / or into fn"
+  `(fn [& args#] 
+    (eval `(~'~m ~@args#))))
+
+(defn average [numbers] (/ (apply + numbers) (count numbers)))
+
+(defn averageofcoord [& more]
+	;(prn more)
+	[
+		(average (map first more))
+		(average (map second more))
+		(average (map last more))
+	])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Functions that initialise the array
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (def keywidthForSpacing 	14.4)
 (def keySpacing 			5.05)
 (def arrXWid				8 )
 (def arrYLen				5 )
 
 (defn createarray [x y] ;x is across, y is down
+	"This makes only the staring array. It will be modified by writingArrayFunctions.
+	Simple 2D vecotr with each element being a map of some key data."
 	(vec(for [ycoin (range y)]
 		(vec (for [xcoin (range x)]
-			{:xcoord xcoin, 
-			 :ycoord ycoin,
+			{:xPosInArr xcoin, 
+			 :yPosInArr ycoin,
 			 :cpntPos [ (* xcoin (+ keySpacing keywidthForSpacing)) (* ycoin (+ keySpacing keywidthForSpacing)) 0], 
 			 :cpntVec [0 0 1],
 			 :cpntAng 0}
@@ -32,20 +53,16 @@
 		))
 	))
 
-
-(defn retr [arr x y]
-	((arr y) x)
-)
-
-
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Functions that write the array
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn moveonXYZ  [arr xmove ymove zmove columnorrow number]
 	(vec(for [ycoin (range arrYLen)]
 		(vec (for [xcoin (range arrXWid)]
 			(let [
 				pntData (retr arr xcoin ycoin)
-				xval		(:xcoord pntData)
-				yval  		(:ycoord pntData)
+				xval		(:xPosInArr pntData)
+				yval  		(:yPosInArr pntData)
 				cpntP 		(:cpntPos pntData)
 				cpntV 		(:cpntVec pntData)
 				cpntA 		(:cpntAng pntData)
@@ -55,8 +72,8 @@
 				]
 				
 
-				{:xcoord xval, 
-				 :ycoord yval,
+				{:xPosInArr xval, 
+				 :yPosInArr yval,
 				 :cpntPos (if (= correct number) 
 				 				[ (+ (cpntP 0) xmove) (+ (cpntP 1) ymove) (+ (cpntP 2) zmove)]
 				 				cpntP)
@@ -71,11 +88,397 @@
 	)
 	)
 
+(defn centrearray [arr]
+	(let [
+		xcoords  (for [ycoin arr pntData ycoin] 
+					((pntData :cpntPos) 0) 
+					)
+		ycoords  (for [ycoin arr pntData ycoin] 
+					((pntData :cpntPos) 1) 
+					)
+		minx 	(apply min xcoords)
+		miny 	(apply min ycoords)
+		maxx 	(apply max xcoords)
+		maxy 	(apply max ycoords)
+
+		halfrangex (/ (- maxx minx) 2)
+		halfrangey (/ (- maxy miny) 2)]
+
+		
+	(vec(for [ycoin (range arrYLen)]
+		(vec (for [xcoin (range arrXWid)]
+			(let [
+				pntData (retr arr xcoin ycoin)
+				xval		(:xPosInArr pntData) ; coordinate in array, not coord in 3d
+				yval  		(:yPosInArr pntData)
+				cpntP 		(:cpntPos pntData)
+				cpntV 		(:cpntVec pntData)
+				cpntA 		(:cpntAng pntData)
+				]
+				{:xPosInArr xval, 
+				 :yPosInArr yval,
+				 :cpntPos [(+ (- (cpntP 0) maxx) halfrangex)
+				           (+ (- (cpntP 1) maxy) halfrangey) 
+				           (cpntP 2)] , 
+				 :cpntVec cpntV,  
+				 :cpntAng cpntA}
+	)))))))
+
+(defn apply3dequation [arr fxy fpartialx fpartialy xmulti ymulti zmulti]
+	"this is a general function. It takes fxy and makes z into fxy. 
+	fxy uses xmulti and ymulti to change the scale of the 3d plot. 
+	It does not change the actual coordinates as this would interfere
+	with switch placement. zmulti is applied to the z coordinates 
+	after the function has been applied to get the scale correct.
+	fpartialx is the partial derivative of fxy with respect to x.
+	fpartialy is the partial derivative of fxy with respect to y.
+
+	The point of including the fpartials is to orientate the switches
+	along the normal vector at that point in the equation so it looks 
+	like a gradual curve.
+
+	It returns an array like the other array writingArrayFunctions."
+	(vec(for [ycoin (range arrYLen)]
+		(vec (for [xcoin (range arrXWid)]
+			(let [
+				pntData (retr arr xcoin ycoin)
+				xval		(:xPosInArr pntData)
+				yval  		(:yPosInArr pntData)
+				cpntP 		(:cpntPos pntData)
+				cpntV 		(:cpntVec pntData)
+				cpntA 		(:cpntAng pntData)
+				
+
+				newPos 		[
+							(cpntP 0) 
+							(cpntP 1) 
+							(+ (cpntP 2) (* (fxy (* (cpntP 0) xmulti) (* (cpntP 1) ymulti)) zmulti)) ]
 
 
-;;;;;;;;;;;;;;;;
-;; SA Keycaps ;;
-;;;;;;;;;;;;;;;;
+				newVec 		[
+							(- (* (fpartialx (* (cpntP 0) xmulti) (* (cpntP 1) ymulti)) zmulti) ) 
+							(- (* (fpartialy (* (cpntP 1) ymulti) (* (cpntP 0) xmulti)) zmulti))
+							1 ]
+				]
+				
+
+				{:xPosInArr xval, 
+				 :yPosInArr yval,
+				 :cpntPos newPos, 
+				 :cpntVec newVec,
+				 :cpntAng cpntA}
+
+		)
+
+	))))
+	)
+
+(defn curvexaxisy [arr]
+	(let [
+		arguments [arr (partial #(* (+ (* (expt %1 2) 0.25) ( expt %2 2) ) 0.008))
+
+					
+					(partial #(+ (* %1 2 0.008 0.25)  (* %2 0) ))
+					(partial #(+ (* %1 2 0.008)     (* %2 0) ))	
+					
+					1
+					1
+					1 ]]
+
+	(apply apply3dequation arguments)))
+
+(defn keyExistence [arr]
+	(let [existencearray
+					 [
+					[false true true false false false true true] 
+					[false true true true true true true true] 
+					[false true true true true true true true] 
+					[true true true true true true true true] 
+					[true true true false false false false true] ;as seem from origin looking in pos x, pos y
+
+					]]
+		(vec (for [ycoin (range arrYLen)]
+			(vec (for [xcoin (range arrXWid)]
+				(assoc (retr arr xcoin ycoin) :existence (get-in existencearray [(- (dec arrYLen) ycoin) xcoin]))
+		)))))
+	)
+
+(defn alignkeys [arr & more]
+	;(prn (nth more 0))
+	(let [
+	 	vecofkeys 		(nth more 0)
+	 	movingkey 		(nth vecofkeys 0)
+
+ 		direction		(vecofkeys 2)
+
+	 	anchorkey		(retr arr (get-in vecofkeys [1 0]) (get-in vecofkeys [1 1]))
+	 	anchkeypos		(anchorkey :cpntPos)
+	 	anchkeyvec		(anchorkey :cpntVec)
+	 	anchkeyang		(anchorkey :cpntAng)
+
+	 	u 				(unitv anchkeyvec)
+	 	a 				(u 0)
+	 	b 				(u 1)
+	 	c 				(u 2)
+	 	d 				(modofvec [0 b c])
+
+	 	ConD 			(/ c d)
+	 	BonD 			(/ b d)
+		
+	 	startingpnt 	(case direction	
+	 						:ontheleft  [-19 0 0]
+	 						:ontheright [19  0 0]
+	 						)
+
+
+
+	 	yaxisinv    	[
+	 					 (+ (* (startingpnt 0) d) (* (startingpnt 2) a))
+	 					 (startingpnt 1)
+	 					 (- (* (startingpnt 2) d) (* (startingpnt 0) a))
+	 					]
+
+	 	xaxisinv   		[
+	 					 (yaxisinv 0)
+	 					 (+ (* (yaxisinv 1) ConD) (* (yaxisinv 2) BonD))
+	 					 (- (* (yaxisinv 2) ConD) (* (yaxisinv 1) BonD))
+	 					]
+        
+	 	finalpos		[
+	 					(+ (xaxisinv 0) (anchkeypos 0))
+	 					(+ (xaxisinv 1) (anchkeypos 1))
+	 					(+ (xaxisinv 2) (anchkeypos 2))
+	 					]
+
+  	    updatedpos 		(assoc-in arr [ (movingkey 1) (movingkey 0) :cpntPos ] finalpos)
+
+
+		updatedvec 		(assoc-in updatedpos [(movingkey 1) (movingkey 0) :cpntVec] anchkeyvec)
+ 
+
+		]
+		;(prn u (modofvec u))
+
+		;(prn finalpos anchkeypos yaxisinv xaxisinv)
+		updatedvec
+		)
+
+	)
+
+(defn angleKey [arr colOrRow points angle]; in x axis
+	(vec(for [ycoin (range arrYLen)]
+		(vec (for [xcoin (range arrXWid)]
+			(let [
+				pntData (retr arr xcoin ycoin)
+				xval		(:xPosInArr pntData)
+				yval  		(:yPosInArr pntData)
+				cpntP 		(:cpntPos pntData)
+				cpntV 		(:cpntVec pntData)
+				cpntA 		(:cpntAng pntData)
+				condition 	(case colOrRow
+								:row (= points yval)
+								:col (= points xval)
+								:colrow (and (= (points 0) xval) (= (points 1) yval)))
+				]
+				
+
+				{:xPosInArr xval, 
+				 :yPosInArr yval,
+				 :cpntPos cpntP,
+				 :cpntVec (if condition 
+				 				;((prn rownum)
+					 			[
+					 			(cpntV 0)
+					 			(- (* (cpntV 1)  (Math/cos angle)) (* (cpntV 2) (Math/sin angle)))
+					 			(+ (* (cpntV 1)  (Math/sin angle)) (* (cpntV 2) (Math/cos angle)))
+
+					 			];)
+					 		cpntV)
+					 		,
+				 :cpntAng cpntA}
+				
+
+				)
+
+			)
+		))
+	))
+
+(defn changeNonExistentKeys [arr]
+	"This changes the position and vector of non existent keys so they minimally disturb the other keys.
+	For instance imagine this arr [[T  T  T]
+								   [T4 T3 T]
+								   [T1 F  T2]] T is true existence, F is false existence and the middle column has been 
+	lowered. This means that F has been lowered. The two T's either side of F would have their row connectors going down 
+	to connect with an invisible key for no reason. This would not look good as imagin the row connector between T1 and F. 
+	It would be a sharp edge which wouldn't be good structurally and visibly. Ideally the row connectors should connect to 
+	a key that is on the same plane as the existing key so that the row connectors look like they are on the same plane as 
+	the existing key. 
+	This function looks at the 8 neighbours of the non existent key and finds the ideal position of F if it 
+	were an extension in the plane described by the neighbour that its connecting to. For instance, T3 would give a position 
+	thats exactly [0 (- 0 mount-hole-height keySpacing) 0] relative to T3 and on the plane described by T3. This is done for 
+	every neighbour that is not outside of the array and is existent (we don't want to take into keys that don't exists because
+	we never make connectors between two non existent keys). The weighted average (using weightingFilter) position of all of these ideal positions is used as the 
+	new position for the non existent key. The average normal vector of all suitable neighbours is also used as the new plane for 
+	the non existent key.
+	I did try a function that used the ideal position according to the key that was making the connector with the non existent key.
+	For instance, if T1 is making a row connector with F, the position of F will temporarily be [(+ 0 mount-hole-height keySpacing) 0 0] 
+	relative to T1 and on the plane described by T1 (with vector T1). And if T3 were making a column with F, F will temporarily be [0 (- 0 mount-hole-height keySpacing) 0]
+	relative to T3 and on the plane described by T3. This was bad as this left gaps between row connector for T1-F, diagonal connector for T4-F,
+	and column connector for T3-F. This made all the connectors perfect continuations of the existent key. Thats how I got the idea 
+	of averaging the ideal positions and vectors. This local ideal approach can be found commented out in retrforbasegoody."
+	(vec(for [ycoin (range arrYLen)]
+		(vec (for [xcoin (range arrXWid)]
+
+			(let [
+				pntData (retr arr xcoin ycoin)
+				existence (pntData :existence)
+				]
+				(if (not existence)
+					(let [weightingFilter 	[1 20 1
+											 20 0 20
+											 1 20 1] ;weighting filter as column and row connectors are more important 
+						 positions 			[
+						 						[(+ 0 mount-hole-height keySpacing) (- 0 mount-hole-height keySpacing) 0] ;positions relative to tl, tm, tr, ml ...
+						 						[0 									(- 0 mount-hole-height keySpacing) 0]
+						 						[(- 0 mount-hole-height keySpacing) (- 0 mount-hole-height keySpacing) 0]
+						 						[(+ 0 mount-hole-height keySpacing) 0 								   0]
+						 						[0 									0 								   0]
+						 						[(- 0 mount-hole-height keySpacing) 0 								   0]
+						 						[(+ 0 mount-hole-height keySpacing) (+ 0 mount-hole-height keySpacing) 0]
+						 						[0 									(+ 0 mount-hole-height keySpacing) 0]
+						 						[(- 0 mount-hole-height keySpacing) (+ 0 mount-hole-height keySpacing) 0]
+
+						 					]
+						newcoord 			(->> 
+												(for [ychange [1 0 -1] xchange [1 0 -1]] (try (get-in arr [(+ ycoin ychange) (- xcoin xchange)]) (catch Exception e nil)));gets the 8 neighbours
+												(map-indexed (fn [idx itm] [idx itm])) ;this is used for keeping track of the positions (tl = 0, tm = 1, tr = 2...)
+												;(map #(nil? (%1 1)))
+												(remove #(nil? (%1 1) ) ) ;remove if it is nil (outside of the array)
+												(remove #(not ((%1 1) :existence))) ;remove if it is a key that doesn't exist
+												;(map #(prn ((%1 1) :xPosInArr) ((%1 1) :yPosInArr)))
+
+												(map (fn [itm] (repeat (weightingFilter (itm 0)) (assoc (itm 1) :positions (itm 0))))) ;adds the key the number of times according to the weightingfilter
+												(flatten)
+
+												(map (fn [itm]  (attachpoint [(itm :cpntPos) (itm :cpntVec) (itm :cpntAng)] (positions (itm :positions))))) ;find the relative position if it were attached to a neighbouring key
+
+												(apply averageofcoord) ;take the average
+												)
+						newvec 				(->> 
+												(for [ychange [1 0 -1] xchange [1 0 -1]] (try (get-in arr [(+ ycoin ychange) (- xcoin xchange)]) (catch Exception e nil))) ;similar thing but for the average vector of the neighbouring keys
+												(map-indexed (fn [idx itm] [idx itm]))
+												;(map #(nil? (%1 1)))
+												(remove #(nil? (%1 1) ) )
+												(remove #(not ((%1 1) :existence)))
+
+												(map (fn [itm] (repeat (weightingFilter (itm 0)) (assoc (itm 1) :positions (itm 0)))))
+												(flatten)
+
+												(map (fn [itm] (itm :cpntVec)))
+
+												(apply averageofcoord)
+												)
+							]
+						(assoc pntData :cpntPos newcoord :cpntVec newvec) ;updated the keys position with new pos and vec
+
+						)
+					(retr arr xcoin ycoin) ;if the key exists, just keep the same data.
+					)
+				)
+
+			)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Functions that read the array
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn retr [arr x y] ((arr y) x))
+
+(declare smartretrPntDataY) ;need to declare smartretrPntDataY because it is referenced before declaration
+
+(defn smartretrPntData [arr xcoin ycoin]
+	"Because the webbing loops through -1 to arrXWid (or arrYLen), you need to be careful not to go outside of the array.
+	This function catches when you are at -1 or arrXWid and returns the position of a key if it were a continutation on the plane of a key inside the array.
+	For instance, if x is -1, it gets position of if x is 0, and moves it [(- 0 mount-hole-width keySpacing ) 0 0] along the plane described by the x = 0 key.
+	Similarly if x = arrXWid, it gets the key with the same y value but x = arrXWid - 1 and continues it to the right by about 19mm. This is what the attachpoint 
+	can do. Once x value is good, it sorts out Y value in a similar way. 
+	There are recursive calls because if the key is at (-1, -1), it will do:
+		(-1, -1)
+	=	(0, -1) but shifted leftwards in the plane of key (0, -1)
+	=   (0,  0) but shifted leftwards in the plane of key (0, -1) but shifted downwards in the plane of key (0, 0)
+
+	The reason for trying to place keys outside the array onto the plane of keys inside of the array, is so that the edges in the keyplate are perpendicular with 
+	the keyswitches.
+	"
+	(cond 
+		(= xcoin -1)
+			(let [ referencepnt		(smartretrPntData arr 0 ycoin)]
+				(assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [(- 0 mount-hole-width keySpacing ) 0 0])))
+		
+		(= xcoin arrXWid)
+			(let [referencepnt		(smartretrPntData arr (dec arrXWid) ycoin)]
+				(assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [(+ mount-hole-width keySpacing ) 0 0])))
+
+		:else
+			(smartretrPntDataY arr xcoin ycoin)
+		))
+
+(defn smartretrPntDataY [arr xcoin ycoin]
+	(cond 
+		(= -1 ycoin) 
+			(let [
+				referencepnt		(smartretrPntData arr xcoin 0 )
+				](assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [0 (- 0 mount-hole-width keySpacing ) 0])))
+
+		(= arrYLen ycoin)
+			(let [
+				referencepnt		(smartretrPntData arr xcoin (dec arrYLen))
+				](assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [0 (+ mount-hole-width keySpacing ) 0])))
+									
+		:else
+			(retr arr xcoin ycoin))
+	)	
+
+;;;;;;;
+;;;Making web
+
+(def leftedgepadding 3)
+(def rightedgepadding 3)
+(def topedgepadding 3)
+(def bottedgepadding 3)
+
+(def mount-hole-width 14)
+(def mount-hole-height 14)
+
+(def web-thickness plate-thickness )
+(def post-size 0.1)
+(def web-post (->> (cube post-size post-size web-thickness)
+                   (translate [0 0 (/ web-thickness -2)])))
+(def edgepost (scale [1 1 3] web-post))
+
+(def post-adj (/ post-size 2))
+(def web-post-tr (translate [(- (/ mount-hole-width  2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] web-post))
+(def web-post-tl (translate [(+ (/ mount-hole-width -2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] web-post))
+(def web-post-bl (translate [(+ (/ mount-hole-width -2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] web-post))
+(def web-post-br (translate [(- (/ mount-hole-width  2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] web-post))
+
+(def web-post-edge-tr (translate [(- (/ mount-hole-width  2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] edgepost))
+(def web-post-edge-tl (translate [(+ (/ mount-hole-width -2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] edgepost))
+(def web-post-edge-bl (translate [(+ (/ mount-hole-width -2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] edgepost))
+(def web-post-edge-br (translate [(- (/ mount-hole-width  2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] edgepost))
+
+(defn triangle-hulls [& shapes]
+	"TBH I didn't write this. Adereth did. Its just a nice hulling function that makes 
+	multiple hulls instead of one big hull. I guess hulls in sets of three shapes as 
+	three points will always form a plane. This way the hulls will always be planes (flat)"
+  (apply union
+         (map (partial apply hull)
+              (partition 3 1 shapes))))
+;;;Finisehd of making web
+;;;;;;;
+
+;;;;;;;
+;;; Keycaps + Keyswitch
 (def plate-thickness 4)
 (def dsa-length 18.25)
 (def dsa-double-length 37.5)
@@ -117,6 +520,41 @@
                    (->> key-cap
                         (translate [0 0 (+ 5 plate-thickness)])
                         (color [240/255 223/255 175/255 1])))})
+(def keyswitch 
+	(let [
+		hw (/ 15.6 2)
+		points 	[
+					[hw hw 0] [hw (- hw) 0] [(- hw) (- hw) 0] [(- hw) hw 0]
+					[hw hw 1] [hw (- hw) 1] [(- hw) (- hw) 1] [(- hw) hw 1]
+					[(- hw 2) (- hw 2) -5] [(- hw 2) (- 0 hw -2) -5] [(- 0 hw -2) (- 0 hw -2) -5] [(- 0 hw -2) (- hw 2) -5]
+					[(- hw 3) (- hw 3) 6.6] [(- hw 3) (- 0 hw -3) 6.6] [(- 0 hw -3) (- 0 hw -3) 6.6] [(- 0 hw -3) (- hw 3) 6.6]
+					]
+
+		faces	[
+				;	[3 2 1 0] 
+				;	[4 5 6 7]
+					[0 1 5 4]
+					[2 3 7 6]
+					[1 2 6 5]
+					[3 0 4 7]
+					[11 10 9 8]
+					[12 13 14 15]
+					[8 9 1 0]
+					[9 10 2 1]
+					[10 11 3 2]
+					[11 8 0 3]
+
+					[4 5 13 12]
+					[5 6 14 13]
+					[6 7 15 14]
+					[7 4 12 15]
+
+					]
+		]
+	(union
+	(polyhedron points faces)
+	(translate [0 0 1] (cylinder (/ 3.30 2) 18.5))
+	)))
 
 (defn showkeycaps [arr]
 		(for [ycoin (range arrYLen) xcoin (range arrXWid)]
@@ -130,8 +568,9 @@
 				(attach [cpntP cpntV cpntA]
 						[[0 0 0] [0 0 1] 0]
 						(union (dsa-cap 1) keyswitch)
-					))
-)))
+					)))))
+;;; Finished Keycaps + Keyswitch
+;;;;;;;
 
 (defn showconnectors [arr]
 		(for [ycoin (range arrYLen) xcoin (range arrXWid)]
@@ -143,108 +582,11 @@
 				]
 
 			(connector [cpntP cpntV cpntA]
-				)
-	)))
-
-;
-;Making web
-;
-
-(def leftedgepadding 3)
-(def rightedgepadding 3)
-(def topedgepadding 3)
-(def bottedgepadding 3)
-
-(def mount-hole-width 14)
-(def mount-hole-height 14)
-
-
-(def web-thickness plate-thickness )
-(def post-size 0.1)
-(def web-post (->> (cube post-size post-size web-thickness)
-                   (translate [0 0 (/ web-thickness -2)])))
-(def edgepost (scale [1 1 3] web-post))
-
-
-(def post-adj (/ post-size 2))
-(def web-post-tr (translate [(- (/ mount-hole-width  2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] web-post))
-(def web-post-tl (translate [(+ (/ mount-hole-width -2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] web-post))
-(def web-post-bl (translate [(+ (/ mount-hole-width -2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] web-post))
-(def web-post-br (translate [(- (/ mount-hole-width  2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] web-post))
-
-(def web-post-edge-tr (translate [(- (/ mount-hole-width  2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] edgepost))
-(def web-post-edge-tl (translate [(+ (/ mount-hole-width -2) post-adj) (- (/ mount-hole-height  2) post-adj) 0] edgepost))
-(def web-post-edge-bl (translate [(+ (/ mount-hole-width -2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] edgepost))
-(def web-post-edge-br (translate [(- (/ mount-hole-width  2) post-adj) (+ (/ mount-hole-height -2) post-adj) 0] edgepost))
-
-(defn triangle-hulls [& shapes]
-	"TBH I didn't write this. Adereth did. Its just a nice hulling function that makes 
-	multiple hulls instead of one big hull. I guess hulls in sets of three shapes as 
-	three points will always form a plane. This way the hulls will always be planes (flat)"
-  (apply union
-         (map (partial apply hull)
-              (partition 3 1 shapes))))
-
-
-
-(defn dual-hull [shapes]
-	;(prn (partition 2 1 shapes))
-
-	(apply union
-		(map (partial hull)
-			 (partition 2 1 shapes))))
-
-
-(defn getcolPntData [arr x y]
-	"Similar to getrowPntData but this deals with x. See getrowPntData and smartretrPntData"
-	(cond 
-		(= x arrXWid)
-			(retr arr (dec x) y)
-		(= x -1)
-			(retr arr (inc x) y)
-		(< x -1)
-			(retr arr 0 y)
-		:else
-			(retr arr x y)
-		)
-	)
-
-(defn getrowPntData [arr x y]
-	"Retrieves the pntData at x y in arr and makes sure that y is in the correct range. See smartretrPntData 
-	for what it does when y is out of bounds. This only deals with y as it gets getcolPntData to deal with x."
-	(cond 
-		(= y arrYLen)
-			(getcolPntData arr x (dec y))
-		(= y -1)
-			(getcolPntData arr x (inc y))
-		(< y -1)
-			(getcolPntData arr x 0)
-		:else 
-			(getcolPntData arr x y) 
-			)
-
-	)
-
-(defn smartretrPntData [arr x y]
-	"This is used to make the edges of the plate. Because the webbing loops through -1
-	to arrXWid (or arrYLen), you need to be careful not to go outside of the array.
-	this function catches when you are at -1 or arrYLen, and returns the closest good position
-	+ edge padding. For instance if you call the array with arrXWid, this will find arrXWid - 1,
-	then it will return arrXWid -1 with an updated x pos. This update will include edge padding.
-
-	getrowPntData is used because inside of getrowPntData it calls getcolPntData. You can't also 
-	call getrowPntData inside getcolPntData because then you will get an infinite loop."
-	
-	(getrowPntData arr x y))
-
-(defmacro make-fn [m] 
-	"This is used to turn macros like and / or into fn"
-  `(fn [& args#] 
-    (eval `(~'~m ~@args#))))
+				))))
 
 (defn putupapost [arr xcoin ycoin pos callingfrom makingwhat callingto buildedgesornot plateorbase]
 	(let [
-		pntData (retrforbase arr xcoin ycoin callingfrom callingto makingwhat)
+		pntData (smartretrPntData arr xcoin ycoin)
 		;pntData  (smartretrPntData arr xcoin ycoin)
 		cpntP 		(:cpntPos pntData)
 		cpntV 		(:cpntVec pntData)
@@ -554,371 +896,6 @@
 
 			))))
 
-(defn attachpoint [[pos vect ang] [x y z]]
-	"Like the attach module except this returns the attached coordinates of a point instead of an attached shape.
-	this is useful when you want to get the attached coordinates for things like polyhedron."
-	(let [ 
-		 
-	 	u 				(unitv vect)
-	 	a 				(u 0)
-	 	b 				(u 1)
-	 	c 				(u 2)
-	 	d 				(modofvec [0 b c])
-
-	 	ConD 			(/ c d)
-	 	BonD 			(/ b d)
-		
-
-	 	yaxisinv    	[
-	 					 (+ (* x d) (* z a))
-	 					 y
-	 					 (- (* z d) (* x a))
-	 					]
-
-	 	xaxisinv   		[
-	 					 (yaxisinv 0)
-	 					 (+ (* (yaxisinv 1) ConD) (* (yaxisinv 2) BonD))
-	 					 (- (* (yaxisinv 2) ConD) (* (yaxisinv 1) BonD))
-	 					]
-        
-	 	finalpos		[
-	 					(+ (xaxisinv 0) (pos 0))
-	 					(+ (xaxisinv 1) (pos 1))
-	 					(+ (xaxisinv 2) (pos 2))
-	 					]
-	 	]
-	 	finalpos
-	))
-
-(defn average [numbers]
-    (/ (apply + numbers) (count numbers)))
-
-(defn averageofcoord [& more]
-	;(prn more)
-	[
-		(average (map first more))
-		(average (map second more))
-		(average (map last more))
-	])
-
-(def smartcontinuationofedges true)
-
-(defn retrforbase [arr xcoin ycoin callingfrom callingto makingwhat]
-	(retrforbasegoodx arr xcoin ycoin callingfrom callingto makingwhat)
-	)
-
-(defn retrforbasegoodx [arr xcoin ycoin callingfrom callingto makingwhat]
-	(cond 
-		(= xcoin -1)
-			(let [ referencepnt		(retrforbase arr 0 ycoin callingfrom callingto makingwhat)]
-				(assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [(- 0 mount-hole-width keySpacing ) 0 0])))
-		
-		(= xcoin arrXWid)
-			(let [referencepnt		(retrforbase arr (dec arrXWid) ycoin callingfrom callingto makingwhat)]
-				(assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [(+ mount-hole-width keySpacing ) 0 0])))
-
-		:else
-			(retrforbasegoody arr xcoin ycoin callingfrom callingto makingwhat)
-		)
-	)
-
-(defn retrforbasegoody [arr xcoin ycoin callingfrom callingto makingwhat]
-	;(prn xcoin ycoin callingfrom callingto makingwhat)
-	(cond 
-		(= -1 ycoin) 
-			(let [
-				referencepnt		(retrforbase arr xcoin 0 callingfrom callingto makingwhat)
-				](assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [0 (- 0 mount-hole-width keySpacing ) 0])))
-
-		(= arrYLen ycoin)
-			(let [
-				referencepnt		(retrforbase arr xcoin (dec arrYLen) callingfrom callingto makingwhat)
-				](assoc referencepnt :cpntPos (attachpoint [(referencepnt :cpntPos) (referencepnt :cpntVec) (referencepnt :cpntAng)] [0 (+ mount-hole-width keySpacing ) 0])))
-	
-		(and (not ((retr arr xcoin ycoin) :existence)) smartcontinuationofedges)
-							(let [newkeyandpos  (case callingfrom
-													:callfromthisone
-														(case makingwhat
-															:makingcolumns [(retrforbase arr xcoin (inc ycoin) callingfrom callingto makingwhat) 	[0 (- 0 mount-hole-height keySpacing) 0]] 
-															:makingrows    [(retrforbase arr (inc xcoin) ycoin callingfrom callingto makingwhat) 	[(- 0 mount-hole-height keySpacing) 0 0]] 
-															:makingdiag    (cond 
-																																				((smartretrPntData arr xcoin (inc ycoin)) 		:existence) [(smartretrPntData arr xcoin (inc ycoin) ) 			[0 (- 0 mount-hole-height keySpacing) 0]]
-
-																				((smartretrPntData arr (inc xcoin) ycoin) 		:existence) [(smartretrPntData arr (inc xcoin) ycoin  	)		[(- 0 mount-hole-height keySpacing) 0 0]]
-																				
-																				((smartretrPntData arr (inc xcoin) (inc ycoin)) :existence) [(smartretrPntData arr (inc xcoin) (inc ycoin)) 	[(- 0 mount-hole-height keySpacing) (- 0 mount-hole-height keySpacing) 0]]
-
-																				)
-															;[(retr arr xcoin ycoin) [0 0 0]]
-															)
-													:callfromleft	
-														(case makingwhat
-															:makingrows    [(retrforbase arr (dec xcoin) ycoin callingfrom callingto makingwhat) 	[(+ mount-hole-height keySpacing) 0 0]] 
-															:makingdiag    (cond 
-																				((smartretrPntData arr (dec xcoin) ycoin) 		:existence) [(smartretrPntData arr (dec xcoin) ycoin  	)		[(+ mount-hole-height keySpacing) 0 0]]
-																				((smartretrPntData arr xcoin (inc ycoin)) 		:existence) [(smartretrPntData arr xcoin (inc ycoin) ) 			[0 (- 0 mount-hole-height keySpacing) 0]]
-																				((smartretrPntData arr (dec xcoin) (inc ycoin)) :existence) [(smartretrPntData arr (dec xcoin) (inc ycoin)) 	[(+ mount-hole-height keySpacing) (- 0 mount-hole-height keySpacing) 0]]
-
-																				)
-															;[(retr arr xcoin ycoin) [0 0 0]]
-															)
-													:callfrombelow	
-														(case makingwhat
-															:makingcolumns [(retrforbase arr xcoin (dec ycoin) callingfrom callingto makingwhat) 	[0 (+ mount-hole-height keySpacing) 0]] 
-															:makingdiag    (cond 
-																				((smartretrPntData arr (inc xcoin) ycoin) 		:existence)  [(retrforbase arr (inc xcoin) ycoin callingfrom callingto makingwhat) 			[(- 0 mount-hole-height keySpacing) 0 0]]
-																				((smartretrPntData arr xcoin (dec ycoin)) 		:existence)  [(retrforbase arr xcoin (dec ycoin) callingfrom callingto makingwhat) 			[0 (+ mount-hole-height keySpacing) 0]]
-																				((smartretrPntData arr (inc xcoin) (dec ycoin)) :existence)  [(retrforbase arr (inc xcoin) (dec ycoin) callingfrom callingto makingwhat) 	[(- 0 mount-hole-height keySpacing) (+ mount-hole-height keySpacing) 0]]
-																				)
-															;[(retr arr xcoin ycoin) [0 0 0]]
-															)
-													:callfromleftbelow	
-														(case makingwhat
-															:makingdiag    (cond 
-																				((smartretrPntData arr (dec xcoin) ycoin) 		:existence)  [(retrforbase arr (dec xcoin) ycoin callingfrom callingto makingwhat) 			[(+ mount-hole-height keySpacing) 0 0]]
-																				((smartretrPntData arr xcoin (dec ycoin)) 		:existence)  [(retrforbase arr xcoin (dec ycoin) callingfrom callingto makingwhat) 			[0 (+ mount-hole-height keySpacing) 0]]
-																				((smartretrPntData arr (dec xcoin) (dec ycoin)) :existence)  [(retrforbase arr (dec xcoin) (dec ycoin) callingfrom callingto makingwhat) 	[(+ mount-hole-height keySpacing) (+ mount-hole-height keySpacing) 0]]
-																				)
-															)
-
-													;[(retr arr xcoin ycoin) [0 0 0]]
-													)
-									]	
-								(assoc (newkeyandpos 0) :cpntPos (attachpoint [((newkeyandpos 0) :cpntPos) ((newkeyandpos 0) :cpntVec) ((newkeyandpos 0) :cpntAng)] (newkeyandpos 1)))
-								)
-									
-		:else
-			(retr arr xcoin ycoin))
-	)	
-
-
-
-(defn centreofcomponentpost [arr component xval yval pos uporlow]
-	(let [
-		currentPnt 		(smartretrPntData arr xval yval)
-		halfwid 		(/ mount-hole-width 2) 			
-		adjacentPnts	(cond 
-							(= component :diag)	
-							(cond 
-								(= pos :tr) [(retrforbase arr xval (inc yval)) (retrforbase arr (inc xval) yval) (retrforbase arr (inc xval) (inc yval))]
-								(= pos :br) [(retrforbase arr xval (dec yval)) (retrforbase arr (inc xval) yval) (retrforbase arr (inc xval) (dec yval))]
-								(= pos :tl) [(retrforbase arr xval (inc yval)) (retrforbase arr (dec xval) yval) (retrforbase arr (dec xval) (inc yval))]
-								(= pos :bl) [(retrforbase arr xval (dec yval)) (retrforbase arr (dec xval) yval) (retrforbase arr (dec xval) (dec yval))]
-								)
-							(= component :row)
-							(cond 
-								(= pos :tr) [(retrforbase arr (inc xval) yval)]
-								(= pos :br) [(retrforbase arr (inc xval) yval)]
-								(= pos :tl) [(retrforbase arr (dec xval) yval)]
-								(= pos :bl) [(retrforbase arr (dec xval) yval)]
-								)
-							(= component :col)
-							(cond 
-								(= pos :tr) [(retrforbase arr xval (inc yval))]
-								(= pos :br) [(retrforbase arr xval (dec yval))]
-								(= pos :tl) [(retrforbase arr xval (inc yval))]
-								(= pos :bl) [(retrforbase arr xval (dec yval))]
-								)
-							)
-
-		corners 		(cond 
-							(= component :diag)
-							(cond 
-								(= pos :tr) [[halfwid halfwid 0] [halfwid (- halfwid) 0] [( - halfwid) halfwid 0] [(- halfwid) (- halfwid) 0]]
-								(= pos :br) [[halfwid (- halfwid) 0] [halfwid halfwid 0] [( - halfwid) (- halfwid) 0] [(- halfwid) halfwid 0]]
-								(= pos :tl) [[(- halfwid) halfwid 0] [(- halfwid) (- halfwid) 0] [halfwid halfwid 0]  [halfwid (- halfwid) 0]]
-								(= pos :bl) [[(- halfwid) (- halfwid) 0] [(- halfwid) halfwid 0] [halfwid (- halfwid) 0] [halfwid halfwid 0]]
-								)
-							(= component :row)
-							(cond 
-								(= pos :tr) [[halfwid halfwid 0] [(- halfwid) halfwid 0]]
-								(= pos :br) [[halfwid (- halfwid) 0] [(- halfwid) (- halfwid) 0]]
-								(= pos :tl) [[(- halfwid) halfwid 0] [halfwid halfwid 0]]
-								(= pos :bl) [[(- halfwid) (- halfwid) 0] [halfwid (- halfwid) 0]]
-							)
-							(= component :col)
-							(cond 
-								(= pos :tr) [[halfwid halfwid 0] [halfwid (- halfwid) 0]]
-								(= pos :br) [[halfwid (- halfwid) 0] [halfwid halfwid 0]]
-								(= pos :tl) [[(- halfwid) halfwid 0] [(- halfwid) (- halfwid) 0]]
-								(= pos :bl) [[(- halfwid) (- halfwid) 0] [(- halfwid) halfwid 0]]
-							)
-						)
-							
-		attachedcorners (cond 
-					(= component :diag)
-						[(attachpoint [(currentPnt :cpntPos) (currentPnt :cpntVec) (currentPnt :cpntAng)] (corners 0))
-						(attachpoint [((adjacentPnts 0) :cpntPos) ((adjacentPnts 0) :cpntVec) ((adjacentPnts 0) :cpntAng)] (corners 1))
-						(attachpoint [((adjacentPnts 1) :cpntPos) ((adjacentPnts 1) :cpntVec) ((adjacentPnts 1) :cpntAng)] (corners 2))
-						(attachpoint [((adjacentPnts 2) :cpntPos) ((adjacentPnts 2) :cpntVec) ((adjacentPnts 2) :cpntAng)] (corners 3))]
-					(or (= component :row ) (= component :col))
-						[(attachpoint [(currentPnt :cpntPos) (currentPnt :cpntVec) (currentPnt :cpntAng)] (corners 0))
-						(attachpoint [((adjacentPnts 0) :cpntPos) ((adjacentPnts 0) :cpntVec) ((adjacentPnts 0) :cpntAng)] (corners 1))]
-					(= component :key)
-						[(currentPnt :cpntPos)]
-						
-					)
-
-
-		cornersaveraged (cond
-							(= component :key)
-								(currentPnt :cpntPos)
-							:else
-								(apply averageofcoord attachedcorners)
-								)
-		averagevec 		(cond 
-							(= component :diag)
-								(averageofcoord (currentPnt :cpntVec) ((adjacentPnts 0) :cpntVec) ((adjacentPnts 1) :cpntVec) ((adjacentPnts 2) :cpntVec))
-							(or (= component :row) (= component :col))
-								(averageofcoord (currentPnt :cpntVec) ((adjacentPnts 0) :cpntVec))
-							(= component :key)
-								(currentPnt :cpntVec)
-						)
-		post 			(cube 0.1 0.1 3)	
-		depthbeneath 	8.1
-		offset			-0.1
-		slightrans 		(case pos
-							:br [(- offset) offset 0]
-							:bl [offset offset 0]
-							:tr [(- offset) (- offset) 0]
-							:tl [offset (- offset) 0]
-							:centre [0 0 0]
-							)
-		; slightrans 		[0 0 0]
-		]
-		;(prn cornersaveraged)
-		;(attach [cornersaveraged averagevec 0] [[0 0 13] [0 0 1] 0] post)
-
-
-		(case uporlow
-			:upper
-				(attachpoint [cornersaveraged averagevec 0] [(slightrans 0) (slightrans 1) (- 0 depthbeneath)])
-
-			:lower
-
-				(attachpoint [cornersaveraged averagevec 0] [(slightrans 0) (slightrans 1) (- 0 depthbeneath plate-thickness)])
-			)
-		
-		)
-
-
-	)
-
-(defn makenewbase [arr]
-	(apply union
-	(concat
-	;(for [ycoin (range arrYLen) xcoin (range arrXWid)]
-	(for [ycoin (range 0 arrYLen) xcoin [0 1 2 3 4 5 6 7]]
-		(when ((retr arr xcoin ycoin) :existence)
-			; (union
-			; (hull
-			; 	(centreofcomponentpost arr :diag xcoin ycoin :tl)
-			; 	(centreofcomponentpost arr :col xcoin ycoin :tl)
-			; 	(centreofcomponentpost arr :row xcoin ycoin :tl)
-			; )
-			; (hull
-			; 	(centreofcomponentpost arr :diag xcoin ycoin :bl)
-			; 	(centreofcomponentpost arr :col xcoin ycoin :bl)
-			; 	(centreofcomponentpost arr :row xcoin ycoin :bl)
-			; 	)
-			; (hull
-			; 	(centreofcomponentpost arr :diag xcoin ycoin :br)
-			; 	(centreofcomponentpost arr :col xcoin ycoin :br)
-			; 	(centreofcomponentpost arr :row xcoin ycoin :br)
-			; 	)
-			; (hull
-			; 	(centreofcomponentpost arr :diag xcoin ycoin :tr)
-			; 	(centreofcomponentpost arr :col xcoin ycoin :tr)
-			; 	(centreofcomponentpost arr :row xcoin ycoin :tr)
-			; 	)
-			; (hull
-			; 	(centreofcomponentpost arr :col xcoin ycoin :tl)
-			; 	(centreofcomponentpost arr :col xcoin ycoin :tr)
-			; 	(centreofcomponentpost arr :col xcoin ycoin :br)
-			; 	(centreofcomponentpost arr :col xcoin ycoin :bl)
-
-			; 	(centreofcomponentpost arr :row xcoin ycoin :tl)
-				
-			; 	(centreofcomponentpost arr :row xcoin ycoin :bl)
-				
-			; 	(centreofcomponentpost arr :row xcoin ycoin :br)
-				
-			; 	(centreofcomponentpost arr :row xcoin ycoin :tr)
-			; 	))
-
-			(let [
-				points [
-					(centreofcomponentpost arr :diag xcoin ycoin :tl :upper)
-					(centreofcomponentpost arr :col  xcoin ycoin :tl :upper)
-					(centreofcomponentpost arr :col  xcoin ycoin :tr :upper)
-					(centreofcomponentpost arr :diag xcoin ycoin :tr :upper)
-					(centreofcomponentpost arr :row  xcoin ycoin :tr :upper)
-					(centreofcomponentpost arr :row  xcoin ycoin :br :upper)
-					(centreofcomponentpost arr :diag xcoin ycoin :br :upper)
-					(centreofcomponentpost arr :col  xcoin ycoin :br :upper)
-					(centreofcomponentpost arr :col  xcoin ycoin :bl :upper)
-					(centreofcomponentpost arr :diag xcoin ycoin :bl :upper)
-					(centreofcomponentpost arr :row  xcoin ycoin :bl :upper)
-					(centreofcomponentpost arr :row  xcoin ycoin :tl :upper)
-
-					(centreofcomponentpost arr :diag xcoin ycoin :tl :lower)
-					(centreofcomponentpost arr :col  xcoin ycoin :tl :lower)
-					(centreofcomponentpost arr :col  xcoin ycoin :tr :lower)
-					(centreofcomponentpost arr :diag xcoin ycoin :tr :lower)
-					(centreofcomponentpost arr :row  xcoin ycoin :tr :lower)
-					(centreofcomponentpost arr :row  xcoin ycoin :br :lower)
-					(centreofcomponentpost arr :diag xcoin ycoin :br :lower)
-					(centreofcomponentpost arr :col  xcoin ycoin :br :lower)
-					(centreofcomponentpost arr :col  xcoin ycoin :bl :lower)
-					(centreofcomponentpost arr :diag xcoin ycoin :bl :lower)
-					(centreofcomponentpost arr :row  xcoin ycoin :bl :lower)
-					(centreofcomponentpost arr :row  xcoin ycoin :tl :lower)
-
-					(centreofcomponentpost arr :key  xcoin ycoin :centre :upper) ;24
-					(centreofcomponentpost arr :key  xcoin ycoin :centre :lower) ;25
-
-					]
-
-				faces [
-					; [0 1 2 3 4 5 6 7 8 9 10 11]
-					; [23 22 21 20 19 18 17 16 15 14 13 12]
-					[0 1 11] [2 3 4] [5 6 7] [8 9 10] [1 2 24] [2 4 24] [4 5 24] [5 7 24] [7 8 24] [8 10 24] [10 11 24] [11 1 24]
-					[13 12 23] [16 15 14] [19 18 17] [22 21 20] [25 14 13] [25 16 14] [25 17 16] [25 19 17] [25 20 19] [25 22 20] [25 23 22] [25 13 23]
-					[0 12 13]
-					[1 0 13]
-					[1 13 14]
-					[1 14 2]
-					[2 14 15]
-					[2 15 3]
-					[3 15 16]
-					[3 16 4]
-					[4 16 17]
-					[4 17 5]
-					[5 17 18]
-					[5 18 6]
-					[6 19 7]
-					[6 18 19]
-					[7 19 20]
-					[7 20 8]
-					[8 20 21]
-					[8 21 9]
-					[9 21 22]
-					[9 22 10]
-					[10 22 23]
-					[10 23 11]
-					[11 23 12]
-					[11 12 0]
-				]]
-			
-			;(translate [(* (rand) 10) (rand) (rand)]
-			;(resize [20 20 3]
-			;(union
-			;(translate [(* 10 xcoin) 0 0]
-			(polyhedron points faces ););)
-				
-		)))
-
-		)))
 (defn makelegs [arr]
 	(let [
 		topright ((retr arr (- arrXWid 1) (- arrYLen 1)) :cpntPos)
@@ -933,315 +910,6 @@
 			(translate [(bottomleft  0) (bottomleft  1) 0] (cylinder 5 50))
 			)
 		)
-	)
-
-(defn makenewbasewithextras [arr]
-	(union
-	(makenewbase arr)
-	(difference
-	(makelegs arr)
-
-	(translate [0 0 1] (makenewbase arr)
-	(translate [0 0 (* (- plate-thickness 0.5) 1)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 2)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 3)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 4)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 5)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 6)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 7)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 8)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 9)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 10)] (makenewbase arr))
-	(translate [0 0 (* (- plate-thickness 0.5) 11)] (makenewbase arr))
-
-	))))
-
-(defn findnewvec [[x1 y1 z1] [x2 y2 z2]]
-	"Simple function to find vector between two points."
-	[(- x2 x1) (- y2 y1) (- z2 z1)]
-	)
-
-(defn curveitbaby [arr]
-	(vec(for [ycoin (range arrYLen)]
-		(vec (for [xcoin (range arrXWid)]
-			(let [
-				pntData (retr arr xcoin ycoin)
-				xval		(:xcoord pntData)
-				yval  		(:ycoord pntData)
-				cpntP 		(:cpntPos pntData)
-				cpntV 		(:cpntVec pntData)
-				cpntA 		(:cpntAng pntData)
-				
-
-				newPos 		[ (cpntP 0) (cpntP 1) (* (sqrt (+ (expt (cpntP 0) 2) (expt (cpntP 1) 2))) 0.1) ]
-				focuspnt	[ 30 0 150]
-
-				newVec 		(findnewvec  [(newPos 0) (newPos 1) (newPos 2)] focuspnt )
-				]
-				
-
-				{:xcoord xval, 
-				 :ycoord yval,
-				 :cpntPos newPos, 
-				 :cpntVec newVec,
-				 :cpntAng cpntA}
-
-		))))))
-
-(defn centrearray [arr]
-	(let [
-		xcoords  (for [ycoin arr pntData ycoin] 
-					((pntData :cpntPos) 0) 
-					)
-		ycoords  (for [ycoin arr pntData ycoin] 
-					((pntData :cpntPos) 1) 
-					)
-		minx 	(apply min xcoords)
-		miny 	(apply min ycoords)
-		maxx 	(apply max xcoords)
-		maxy 	(apply max ycoords)
-
-		halfrangex (/ (- maxx minx) 2)
-		halfrangey (/ (- maxy miny) 2)]
-
-		
-	(vec(for [ycoin (range arrYLen)]
-		(vec (for [xcoin (range arrXWid)]
-			(let [
-				pntData (retr arr xcoin ycoin)
-				xval		(:xcoord pntData) ; coordinate in array, not coord in 3d
-				yval  		(:ycoord pntData)
-				cpntP 		(:cpntPos pntData)
-				cpntV 		(:cpntVec pntData)
-				cpntA 		(:cpntAng pntData)
-				]
-				{:xcoord xval, 
-				 :ycoord yval,
-				 :cpntPos [(+ (- (cpntP 0) maxx) halfrangex)
-				           (+ (- (cpntP 1) maxy) halfrangey) 
-				           (cpntP 2)] , 
-				 :cpntVec cpntV,  
-				 :cpntAng cpntA}
-
-
-				)
-
-			))))
-
-	
-
-	)
-
-	)
-
-(defn apply3dequation [arr fxy fpartialx fpartialy xmulti ymulti zmulti]
-	"this is a general function. It takes fxy and makes z into fxy. 
-	fxy uses xmulti and ymulti to change the scale of the 3d plot. 
-	It does not change the actual coordinates as this would interfere
-	with switch placement. zmulti is applied to the z coordinates 
-	after the function has been applied to get the scale correct.
-	fpartialx is the partial derivative of fxy with respect to x.
-	fpartialy is the partial derivative of fxy with respect to y.
-
-	The point of including the fpartials is to orientate the switches
-	along the normal vector at that point in the equation so it looks 
-	like a gradual curve.
-
-	It returns an array like the other array transformationFunctions."
-	(vec(for [ycoin (range arrYLen)]
-		(vec (for [xcoin (range arrXWid)]
-			(let [
-				pntData (retr arr xcoin ycoin)
-				xval		(:xcoord pntData)
-				yval  		(:ycoord pntData)
-				cpntP 		(:cpntPos pntData)
-				cpntV 		(:cpntVec pntData)
-				cpntA 		(:cpntAng pntData)
-				
-
-				newPos 		[
-							(cpntP 0) 
-							(cpntP 1) 
-							(+ (cpntP 2) (* (fxy (* (cpntP 0) xmulti) (* (cpntP 1) ymulti)) zmulti)) ]
-
-
-				newVec 		[
-							(- (* (fpartialx (* (cpntP 0) xmulti) (* (cpntP 1) ymulti)) zmulti) ) 
-							(- (* (fpartialy (* (cpntP 1) ymulti) (* (cpntP 0) xmulti)) zmulti))
-							1 ]
-				]
-				
-
-				{:xcoord xval, 
-				 :ycoord yval,
-				 :cpntPos newPos, 
-				 :cpntVec newVec,
-				 :cpntAng cpntA}
-
-		)
-
-	))))
-	)
-
-(defn gradualcurve [arr rowangle columnangle]
-		"This curves the array gradually."
-	(vec (for [ycoin (range arrYLen)]
-		(vec (for [xcoin (range arrXWid)]
-
-			(let [
-				pntData (retr arr xcoin ycoin)
-				xval		(:xcoord pntData)
-				yval  		(:ycoord pntData)
-				cpntP 		(:cpntPos pntData)
-				cpntV 		(:cpntVec pntData)
-				cpntA 		(:cpntAng pntData)
-				xmod		(int (/ arrXWid 2))
-				ymod		(int (/ arrYLen 2))
-
-				betterxval  (- xval xmod)
-				betteryval  (inc (- yval xmod))
-
-				currentcolangle (* betteryval columnangle)
-				currentrowangle (* betterxval columnangle)
-				 		
-
-				rowrotated	[
-							(cpntP 0) 
-							(- (* (cpntP 1) (Math/cos currentcolangle))  (* (cpntP 2) (Math/sin currentcolangle)) ) 
-							(* (+ (* (cpntP 1) (Math/sin currentcolangle))  (* (cpntP 2) (Math/cos currentcolangle)) ) 1)
-							]
-
-				fullyrotated [
-							(- (* (rowrotated 0) (Math/cos currentrowangle))  (* (rowrotated 2) (Math/sin currentrowangle)) ) 
-							(rowrotated 1)
-							(+ (* (rowrotated 2) (Math/cos currentrowangle))  (* (rowrotated 0) (Math/sin currentrowangle)) ) 
-
-							]
-
-				newVec 		(findnewvec fullyrotated [0 0 1] ) 
-				]
-				
-				(prn betteryval)
-				{:xcoord xval, 
-				 :ycoord yval,
-				 :cpntPos fullyrotated, 
-				 :cpntVec newVec,
-				 :cpntAng cpntA}
-
-
-
-			))))))
-
-(defn newcurveitbaby [arr]
-	(apply3dequation
-		arr
-		(partial  #(- (sqrt (- 1000 (expt %1 2) (expt %2 2)))))
-		(partial  #(/ %1 (sqrt (- 1000 (expt %1 2) (expt %2 2)))))
-		(partial  #(/ %1 (sqrt (- 1000 (expt %1 2) (expt %2 2)))))
-		0.25
-		0.2
-		5
-		)
-	)
-
-(defn curvexaxisy [arr]
-	(let [
-		arguments [arr (partial #(* (+ (* (expt %1 2) 0.25) ( expt %2 2) ) 0.008))
-
-					
-					(partial #(+ (* %1 2 0.008 0.25)  (* %2 0) ))
-					(partial #(+ (* %1 2 0.008)     (* %2 0) ))	
-					
-					1
-					1
-					1 ]]
-
-	(apply apply3dequation arguments)))
-
-(defn showfunction [fxy xrange yrange]
-	(for [x (range (- xrange) xrange) y (range (- yrange) yrange)] (
-		
-		(spit "things/post-demo.scad"
-      		(point x y (fxy x y) )) :append true)
-		)
-	)
-
-(defn keyExistence [arr]
-	(let [existencearray
-					 [
-					[false true true false false false true true] 
-					[false true true true true true true true] 
-					[false true true true true true true true] 
-					[true true true true true true true true] 
-					[true true true false false false false true] ;as seem from origin looking in pos x, pos y
-
-					]]
-		(vec (for [ycoin (range arrYLen)]
-			(vec (for [xcoin (range arrXWid)]
-				(assoc (retr arr xcoin ycoin) :existence (get-in existencearray [(- (dec arrYLen) ycoin) xcoin]))
-		)))))
-	)
-
-(defn alignkeys [arr & more]
-	;(prn (nth more 0))
-	(let [
-	 	vecofkeys 		(nth more 0)
-	 	movingkey 		(nth vecofkeys 0)
-
- 		direction		(vecofkeys 2)
-
-	 	anchorkey		(retr arr (get-in vecofkeys [1 0]) (get-in vecofkeys [1 1]))
-	 	anchkeypos		(anchorkey :cpntPos)
-	 	anchkeyvec		(anchorkey :cpntVec)
-	 	anchkeyang		(anchorkey :cpntAng)
-
-	 	u 				(unitv anchkeyvec)
-	 	a 				(u 0)
-	 	b 				(u 1)
-	 	c 				(u 2)
-	 	d 				(modofvec [0 b c])
-
-	 	ConD 			(/ c d)
-	 	BonD 			(/ b d)
-		
-	 	startingpnt 	(case direction	
-	 						:ontheleft  [-19 0 0]
-	 						:ontheright [19  0 0]
-	 						)
-
-
-
-	 	yaxisinv    	[
-	 					 (+ (* (startingpnt 0) d) (* (startingpnt 2) a))
-	 					 (startingpnt 1)
-	 					 (- (* (startingpnt 2) d) (* (startingpnt 0) a))
-	 					]
-
-	 	xaxisinv   		[
-	 					 (yaxisinv 0)
-	 					 (+ (* (yaxisinv 1) ConD) (* (yaxisinv 2) BonD))
-	 					 (- (* (yaxisinv 2) ConD) (* (yaxisinv 1) BonD))
-	 					]
-        
-	 	finalpos		[
-	 					(+ (xaxisinv 0) (anchkeypos 0))
-	 					(+ (xaxisinv 1) (anchkeypos 1))
-	 					(+ (xaxisinv 2) (anchkeypos 2))
-	 					]
-
-  	    updatedpos 		(assoc-in arr [ (movingkey 1) (movingkey 0) :cpntPos ] finalpos)
-
-
-		updatedvec 		(assoc-in updatedpos [(movingkey 1) (movingkey 0) :cpntVec] anchkeyvec)
- 
-
-		]
-		;(prn u (modofvec u))
-
-		;(prn finalpos anchkeypos yaxisinv xaxisinv)
-		updatedvec
-		)
-
 	)
 
 (defn usbcutouts [positiveornegativeshape]
@@ -1285,8 +953,8 @@
 	(for [ycoin (range arrYLen) xcoin (range arrXWid)]
 		(let [
 			pntData (retr arr xcoin ycoin)
-			; xval		(:xcoord pntData)
-			; yval  	(:ycoord pntData)
+			; xval		(:xPosInArr pntData)
+			; yval  	(:yPosInArr pntData)
 			cpntP 		(:cpntPos pntData)
 			cpntV 		(:cpntVec pntData)
 			cpntA 		(:cpntAng pntData)
@@ -1311,133 +979,14 @@
 		)
 
 	)
-
-
-(defn angleKey [arr colOrRow points angle]; in x axis
-	(vec(for [ycoin (range arrYLen)]
-		(vec (for [xcoin (range arrXWid)]
-			(let [
-				pntData (retr arr xcoin ycoin)
-				xval		(:xcoord pntData)
-				yval  		(:ycoord pntData)
-				cpntP 		(:cpntPos pntData)
-				cpntV 		(:cpntVec pntData)
-				cpntA 		(:cpntAng pntData)
-				condition 	(case colOrRow
-								:row (= points yval)
-								:col (= points xval)
-								:colrow (and (= (points 0) xval) (= (points 1) yval)))
-				]
-				
-
-				{:xcoord xval, 
-				 :ycoord yval,
-				 :cpntPos cpntP,
-				 :cpntVec (if condition 
-				 				;((prn rownum)
-					 			[
-					 			(cpntV 0)
-					 			(- (* (cpntV 1)  (Math/cos angle)) (* (cpntV 2) (Math/sin angle)))
-					 			(+ (* (cpntV 1)  (Math/sin angle)) (* (cpntV 2) (Math/cos angle)))
-
-					 			];)
-					 		cpntV)
-					 		,
-				 :cpntAng cpntA}
-				
-
-				)
-
-			)
-		))
-	))
-
-(defn base-dual-hulls [shapes]
-	 (apply union
-         (map (partial apply hull)
-              (partition 2 1 shapes))))
-
-(defn newbase [arr & more]
 	
-	;(base-dual-hulls
-	;(concat
-		(for [ycoin (range arrYLen) xcoin (range arrXWid)]
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Main Functions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-		(let [
-			pntData 	(retr arr xcoin ycoin)
-			cpntP 		(:cpntPos pntData)
-			cpntV 		(:cpntVec pntData)
-			cpntA 		(:cpntAng pntData)
-			existence (:existence pntData)
-			pntDataAbv 	(smartretrPntData arr xcoin (inc ycoin))
-			cpntPAbv 		(:cpntPos pntDataAbv)
-			cpntVAbv 		(:cpntVec pntDataAbv)
-			cpntAAbv 		(:cpntAng pntDataAbv)
-			existenceAbv (:existence pntDataAbv)
-			pntDataRght 	(smartretrPntData arr (inc xcoin) ycoin)
-			cpntPRght 		(:cpntPos pntDataRght)
-			cpntVRght 		(:cpntVec pntDataRght)
-			cpntARght 		(:cpntAng pntDataRght)
-			existenceRght (:existence pntDataRght)
-			pntDataRghtAbv 	(smartretrPntData arr (inc xcoin) (inc ycoin))
-			cpntPRghtAbv 		(:cpntPos pntDataRghtAbv)
-			cpntVRghtAbv 		(:cpntVec pntDataRghtAbv)
-			cpntARghtAbv 		(:cpntAng pntDataRghtAbv)
-			existenceRghtAbv (:existence pntDataRghtAbv)
-			baseThickness 4
-			depth		14
-			]
-
-
-			(union
-			(when (and existence existenceAbv)
-				(hull
-					(->>
-					(cube 16 16 baseThickness)
-					(attach [cpntP cpntV cpntA] [[0 0 depth] [0 0 1] 0]))
-					(->>
-					(cube 16 16 baseThickness)
-					(color [1 0.5 0 1])
-					(attach [cpntPAbv cpntVAbv cpntAAbv] [[0 0 depth] [0 0 1] 0]))
-			
-			))
-			(when (and existence existenceRght)
-				(hull
-					(->>
-					(cube 16 16 baseThickness)
-					(attach [cpntP cpntV cpntA] [[0 0 depth] [0 0 1] 0]))
-					(->>
-					(cube 16 16 baseThickness)
-					(attach [cpntPRght cpntVRght cpntARght] [[0 0 depth] [0 0 1] 0]))
-			
-			))
-			(when (and existence existenceRghtAbv)
-				(hull
-					(->>
-					(cube 16 16 baseThickness)
-					(attach [cpntP cpntV cpntA] [[0 0 depth] [0 0 1] 0]))
-					(->>
-					(cube 16 16 baseThickness)
-					(attach [cpntPRghtAbv cpntVRghtAbv cpntARghtAbv] [[0 0 depth] [0 0 1] 0]))
-			
-			))
-			(when (and existenceAbv existenceRght)
-				(hull
-					(->>
-					(cube 16 16 baseThickness)
-					(attach [cpntPAbv cpntVAbv cpntAAbv] [[0 0 depth] [0 0 1] 0]))
-					(->>
-					(cube 16 16 baseThickness)
-					(attach [cpntPRght cpntVRght cpntARght] [[0 0 depth] [0 0 1] 0]))
-			
-			))
-
-
-			)))
-	);))
-	
-(defn transformationFunctions [arr & more]
-	"these are the functions that rewrite the array"
+(defn writingArrayFunctions [arr & more]
+	"These are the functions that rewrite the array. Each function takes an arr as input 
+	and outputs a modified arr ready to be used as input by the next function. "
 	(-> 
 		(centrearray arr)
 		
@@ -1445,14 +994,14 @@
 		(moveonXYZ 0 15  -2 :col 0)
 		(moveonXYZ 0 15  -2 :col 1)
 		(moveonXYZ 0 15  -2 :col 2)
-		(moveonXYZ 0 19 -5 :col 3)
-		(moveonXYZ 0 8 -2.5  :col 4)
-		(moveonXYZ 0 0 -8  :row 0)
+		(moveonXYZ 0 19 -5  :col 3)
+		(moveonXYZ 0 8 -2.5 :col 4)
+		(moveonXYZ 0 0 -8   :row 0)
 
 		(curvexaxisy)
 
-		; (angleKey :row 0 		(/ Math/PI 6))
-		; (angleKey :colrow [0 1] (/ Math/PI 6))
+		(angleKey :row 0 		(/ Math/PI 6))
+		(angleKey :colrow [0 1] (/ Math/PI 6))
 		
 		(alignkeys [[0 0] [1 0] :ontheleft])
 		(alignkeys [[7 0] [6 0] :ontheright])
@@ -1461,50 +1010,14 @@
 		(alignkeys [[7 3] [6 3] :ontheright])
 		(alignkeys [[7 4] [6 4] :ontheright])
 		(keyExistence)
+		(changeNonExistentKeys)
 
 		)
 	)
 	
-
-(def keyswitch 
-	(let [
-		hw (/ 15.6 2)
-		points 	[
-					[hw hw 0] [hw (- hw) 0] [(- hw) (- hw) 0] [(- hw) hw 0]
-					[hw hw 1] [hw (- hw) 1] [(- hw) (- hw) 1] [(- hw) hw 1]
-					[(- hw 2) (- hw 2) -5] [(- hw 2) (- 0 hw -2) -5] [(- 0 hw -2) (- 0 hw -2) -5] [(- 0 hw -2) (- hw 2) -5]
-					[(- hw 3) (- hw 3) 6.6] [(- hw 3) (- 0 hw -3) 6.6] [(- 0 hw -3) (- 0 hw -3) 6.6] [(- 0 hw -3) (- hw 3) 6.6]
-					]
-
-		faces	[
-				;	[3 2 1 0] 
-				;	[4 5 6 7]
-					[0 1 5 4]
-					[2 3 7 6]
-					[1 2 6 5]
-					[3 0 4 7]
-					[11 10 9 8]
-					[12 13 14 15]
-					[8 9 1 0]
-					[9 10 2 1]
-					[10 11 3 2]
-					[11 8 0 3]
-
-					[4 5 13 12]
-					[5 6 14 13]
-					[6 7 15 14]
-					[7 4 12 15]
-
-					]
-		]
-	(union
-	(polyhedron points faces)
-	(translate [0 0 1] (cylinder (/ 3.30 2) 18.5))
-	)))
-
-(defn doesnttoucharrayFunctions [arr & more]
-	"These functions only read the array hence the arr parameter being 
-	passed to each of them individually. Unlike the threading of the transformationFunctions"
+(defn readingArrayFunctions [arr & more]
+	"These functions only read the array and return OpenSCAD shapes hence the arr parameter being 
+	passed to each of them individually (unlike the threading of the writingArrayFunctions)"
 	;(let [base (makeconnectors arr :base)]
 	(union 
 		;(putsquareinarr arr)
@@ -1512,7 +1025,7 @@
 		
 		(makeconnectors arr :plate)
 		;(scale [0.97 0.95 1] 
-		(makeconnectors arr :base)
+		;(makeconnectors arr :base)
 		;(makelegs arr)
 		;(hull
 		;(makenewbasewithextras arr);)
@@ -1533,17 +1046,16 @@
 		; 	))
 		;(usbcutouts base)
 		;(makesidenubs arr)
-		;(showkeycaps arr)
-		;(showconnectors arr)
+		(showkeycaps arr)
+		(showconnectors arr)
 		;keyswitch
 		;)
 	))
 
-
 (defn buildarray []
-		 (-> (createarray arrXWid arrYLen)
-		 	 (transformationFunctions)
-		 	 (doesnttoucharrayFunctions) ;the outcome of this should be code for scad-clj
+		 (-> (createarray arrXWid arrYLen) ;create the array to pass onto the transformation functions
+		 	 (writingArrayFunctions)
+		 	 (readingArrayFunctions) ;the outcome of this should be code for scad-clj
 		 	 )
 	)
 
@@ -1552,6 +1064,6 @@
       	(->>
       	(buildarray)
       	;(rotate (/ Math/PI 15) [0 1 0]) 
-      ;	(rotate (/ Math/PI 10) [1 0 0])
+     	;(rotate (/ Math/PI 10) [1 0 0])
 
       		))  :append true)
