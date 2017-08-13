@@ -612,7 +612,7 @@
 	)
 
 (defn sidenub []
-	(->> (cylinder 1 2.75)
+	(->> (cylinder 0.6 2.75)
   		 (with-fn 30)
 		 (rotate (/ π 2) [1 0 0])
 		 (translate [(+ (/ mount-hole-width 2)) 0 1])
@@ -655,6 +655,47 @@
 
 	)
 	
+(defn promicro [height width length positiveornegativeshape arr]
+	(let [
+		maxwallthick		3
+		midwallthick 		2
+		ihw				(/ width 2) ;internal halfwidth
+		ihl 			(/ height 2) 
+
+		shape 			(case positiveornegativeshape
+							:pos
+							(union
+								(hull
+									(translate [0 0 (- maxwallthick)] 		 (cube (+ width midwallthick) (+ midwallthick length) 0.01))
+									(translate [0 0 (+ height midwallthick)] (cube (+ width (* 2 maxwallthick) 20) (+ length (* 2 maxwallthick)) 0.01))
+									))
+							:neg
+							(union
+								(hull
+									(cube width length 0.01)
+									(translate [0 0 height] 				   (cube (+ width midwallthick) (+ length midwallthick) 0.01))
+									(translate [0 0 (+ 10 height midwallthick)] (cube (+ width midwallthick) (+ length midwallthick) 0.01))
+									)
+							(translate [0 10 0]
+								(hull
+									(cube 8.5 length 0.01)
+									(translate [0 0 height] (cube 8.5 length 0.01)))))
+						
+						)
+
+		keyforattachment (retr arr 3 3 )
+
+		]
+
+		(->> shape
+			(rotate  -0.07 [1 0 0])
+			(rotate  0.04 [0 1 0])
+			(attach [(:cpntPos keyforattachment) (:cpntVec keyforattachment) 0 ] [[10 0 19] [0 0 1] 0])
+			)
+		
+		;(prn (:cpntPos keyforattachment))
+		)
+	)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions that write the array
@@ -777,10 +818,10 @@
 
 (defn curvexaxisy [arr]
 	(let [
-		arguments [arr (partial #(* (+ (* (expt %1 2) 0.000000025) ( expt %2 2) ) 0.008))
+		arguments [arr (partial #(* (+ (* (expt %1 2) 0.25) ( expt %2 2) ) 0.008))
 
 					
-					(partial #(+ (* %1 2 0.008 0.000000025)  (* %2 0) ))
+					(partial #(+ (* %1 2 0.008 0.25)  (* %2 0) ))
 					(partial #(+ (* %1 2 0.008)     (* %2 0) ))	
 					
 					1
@@ -1084,13 +1125,13 @@
 		;(putsquareinarr arr)
 		;(difference 
 
-		; ;;MAKING PLATE
+		;;MAKING PLATE
 		; (rotate (/ Math/PI 15) [0 1 0] 
 		; 	(union 
 		; 		(makeconnectors arr :plate)
 		; 		(makesidenubs arr)))
 
-		;;MAKING BASE
+		;MAKING BASE
 		; (union
 		; 	(difference 
 		; 	 	(rotate (/ Math/PI 15) [0 1 0] (makeconnectors arr :base))
@@ -1106,8 +1147,14 @@
 		; 			(translate [0 0 (* basethickness 1.8)] (rotate (/ Math/PI 15) [0 1 0] (makeconnectors arr :base))))
 		; 	)
 
-		;;;MAKING EASY BASE
-		;(rotate (/ Math/PI 15) [0 1 0] (makeconnectors arr :base))
+		;MAKING EASY BASE
+		(rotate (/ Math/PI 15) [0 1 0] 
+			(difference
+				(union
+					(makeconnectors arr :base)
+					(promicro 4.4 18 33.3 :pos arr))
+				(promicro 4.4 18 33.3 :neg arr)
+				))
 
 		;(hull
 		;(makenewbasewithextras arr);)
@@ -1130,7 +1177,7 @@
 		
 		;(rotate (/ Math/PI 15) [0 1 0] (showkeycaps arr))
 		;(showconnectors arr)
-		;keyswitch
+		;(promicro 4.4 18 33.3 :neg arr)
 		;)
 	))
 
