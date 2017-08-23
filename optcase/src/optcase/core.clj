@@ -579,12 +579,12 @@
 		]
 		(difference
 			(union
-				(translate [(+ (topright    0) -10) (- (topright    1) 5) -55] (cylinder 5 60))
-				(translate [(+ (topleft     0) 5  ) (- (topleft     1) 3) -37] (cylinder 5 60))
-				(translate [(- (bottomright 0) 10 ) (- (bottomright 1) 16) -48] (cylinder 5 60))
-				(translate [(+ (bottomleft  0) 6  ) (- (bottomleft  1) 1) -24] (cylinder 5 60))
+				(translate [(+ (topright    0) 0) (- (topright    1) -5) -41] (cylinder 5 60))
+				(translate [(+ (topleft     0) -5  ) (- (topleft     1) -10) -27] (cylinder 5 60))
+				(translate [(- (bottomright 0) -2 ) (- (bottomright 1) 25) -38] (cylinder 5 60))
+				(translate [(+ (bottomleft  0) 12  ) (- (bottomleft  1) -3) -24] (cylinder 5 60))
 			)
-			(translate [0 0 -84.8] (cube 200 200 100))
+			(translate [0 0 -77] (cube 200 200 100))
 	)))
 
 (defn usbcutouts [positiveornegativeshape]
@@ -696,6 +696,49 @@
 		;(prn (:cpntPos keyforattachment))
 		)
 	)
+
+(defn microusb [height width length positiveornegativeshape arr]
+	(let [
+		maxwallthick		2
+		midwallthick 		2
+		ihw				(/ width 2) ;internal halfwidth
+		ihl 			(/ height 2) 
+
+		shape 			(case positiveornegativeshape
+							:pos
+							(union
+								(hull
+									(translate [0 0 (- maxwallthick)] 		 (cube (+ width midwallthick) (+ midwallthick length) 0.01))
+									(translate [0 0 (+ height midwallthick)] (cube (+ width (* 2 maxwallthick) 10) (+ length (* 2 maxwallthick)) 0.01))
+									))
+							:neg
+							(union
+								(hull
+									(cube width length 0.01)
+									(translate [0 0 height] 				   (cube (+ width midwallthick) (+ length midwallthick) 0.01))
+									(translate [0 0 (+ 10 height midwallthick)] (cube (+ width midwallthick) (+ length midwallthick) 0.01))
+									)
+							(translate [0 10 0]
+								(hull
+									(cube 8.5 length 0.01)
+									(translate [0 0 height] (cube 8.5 length 0.01)))))
+						
+						)
+
+		keyforattachment (retr arr 7 4 )
+
+		]
+
+		(->> shape
+			(rotate  -0.4 [1 0 0])
+			(rotate  0.04 [0 1 0])
+			(attach [(:cpntPos keyforattachment) (:cpntVec keyforattachment) 0 ] [[13 6 19] [0 0 1] 0])
+			)
+		
+		;(prn (:cpntPos keyforattachment))
+		)
+	)
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Functions that write the array
@@ -837,7 +880,7 @@
 					[false false true true true true true true true] 
 					[false false true true true true true true true] 
 					[false false true true true true true true true] 
-					[true true true true true true true true true] ;as seem from origin looking in pos x, pos y
+					[false true true true true true true true true] ;as seem from origin looking in pos x, pos y
 
 					]]
 		(vec (for [ycoin (range arrYLen)]
@@ -1063,15 +1106,6 @@
 	(-> 
 		(centrearray arr)
 		(moveonXYZ :all nil 0 -12 0)
-
-		; (moveonXYZ :col 0 0 15  -2 )
-		; (moveonXYZ :col 1 0 15  -2 )
-		; (moveonXYZ :col 2 0 15  -2 )
-		; (moveonXYZ :col 3 0 15 -2)
-		; (moveonXYZ :col 4 0 19 -5  )
-		; (moveonXYZ :col 5 0 8 -2.5 )
-		; (moveonXYZ :row 0 0 0 -8  )
-		; (moveonXYZ :colrow [3 0] 0 -8 2)
 		
 		(moveonXYZ :col 7 5 0 0)
 		(moveonXYZ :row 3 0 1.2 0)
@@ -1088,19 +1122,20 @@
 
 
 		(moveonXYZ :col 2 		 0 7 -3)
-		(moveonXYZ :colrow [2 0] 0 -7 3)
+		(moveonXYZ :colrow [2 0] 0 -4 3)
 
 		(moveonXYZ :col 3 		 0 7 -3)
-		(moveonXYZ :colrow [3 0] 0 -7 3)
+		(moveonXYZ :colrow [3 0] 0 -4 3)
 
 
-		(moveonXYZ :col 4 		 0 10 -7)
-		(moveonXYZ :colrow [4 0] 0 -10 7)
+		(moveonXYZ :col 4 		 0 14 -7)
+		(moveonXYZ :colrow [4 0] 0 -6 7)
 
 		(moveonXYZ :col 5 		 0 7 -3)
-		(moveonXYZ :colrow [5 0] 0 -7 3)
+		(moveonXYZ :colrow [5 0] 0 -4 3)
 
 
+		(moveonXYZ :colrow [1 0] 0 0 -5)
 
 
 		
@@ -1121,15 +1156,15 @@
 	"These functions only read the array and return OpenSCAD shapes hence the arr parameter being 
 	passed to each of them individually (unlike the threading of the writingArrayFunctions)"
 	;(let [base (makeconnectors arr :base)]
-	(union 
+	 (rotate (/ Math/PI 15) [0 1 0]  (union 
 		;(putsquareinarr arr)
 		;(difference 
 
-		;;MAKING PLATE
-		; (rotate (/ Math/PI 15) [0 1 0] 
-		; 	(union 
-		; 		(makeconnectors arr :plate)
-		; 		(makesidenubs arr)))
+		;MAKING PLATE
+			; (union 
+			; 	(makeconnectors arr :plate)
+			; 	(makesidenubs arr)) 
+			
 
 		;MAKING BASE
 		; (union
@@ -1148,38 +1183,31 @@
 		; 	)
 
 		;MAKING EASY BASE
-		(rotate (/ Math/PI 15) [0 1 0] 
-			(difference
-				(union
+		(difference
+			(union
+				(difference
 					(makeconnectors arr :base)
-					(promicro 4.4 18 33.3 :pos arr))
+					(scale [1.001 1.001 1] (makeconnectors arr :plate))
+					)
+				(promicro 4.4 18 33.3 :pos arr)
+				(microusb 4 8.2 11.5 :pos arr))
+			(union
 				(promicro 4.4 18 33.3 :neg arr)
-				))
+				(microusb 4 8.2 11.5 :neg arr))
+			)
+		 (rotate (/ Math/PI -15) [0 1 0] (makelegs arr))
+
+
 
 		;(hull
 		;(makenewbasewithextras arr);)
 		;(translate [0 0 (- 0 plate-thickness -0.1)] (makenewbase arr)))
 
-		; (difference
-		; 	(union (newbase arr))
-		; 	(union (translate [0 0 4] (newbase arr)))
-		; )
-		; (difference
-		; 	(union
-		; 		base
-		; 		(usbcutouts :positive)
-		; 		)
-		; 	(union
-		; 		(usbcutouts :negative)
-		; 		;(translate [0 0 (+ plate-thickness 1.5)] base)
-		; 	))
-		;(usbcutouts base)
 		
-		;(rotate (/ Math/PI 15) [0 1 0] (showkeycaps arr))
+		;showkeycaps arr)
 		;(showconnectors arr)
-		;(promicro 4.4 18 33.3 :neg arr)
-		;)
-	))
+
+	)))
 
 (defn buildarray []
 		 (-> (createarray arrXWid arrYLen) ;create the array to pass onto the transformation functions
